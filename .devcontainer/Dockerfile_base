@@ -1,0 +1,18 @@
+FROM mcr.microsoft.com/devcontainers/base:bookworm
+
+COPY bashrc_add /bashrc_add
+
+ARG USERNAME=vscode
+RUN mkdir /commandhistory \
+    && mkdir -p /home/$USERNAME/.vscode-server/extensions \
+        /home/$USERNAME/.vscode-server-insiders/extensions \
+    && chown -R $USERNAME \
+        /home/$USERNAME/.vscode-server \
+        /home/$USERNAME/.vscode-server-insiders \
+    && touch /commandhistory/.bash_history \
+    && chown -R $USERNAME /commandhistory \
+    && cat bashrc_add >> "/home/$USERNAME/.bashrc" \
+    && rm bashrc_add \
+    && apt update \
+    && apt install -y --no-install-recommends postgresql-client
+USER $USERNAME

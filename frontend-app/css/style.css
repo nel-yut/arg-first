@@ -1,0 +1,700 @@
+/**
+ * style.css - グローバルスタイル（2カラムレイアウト版）
+ * 2000年代初頭の個人ページ風デザイン
+ */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  font-family: 'MS Pゴシック', 'Courier New', monospace;
+  background-color: #000000;
+  color: #ffffff;
+  line-height: 1.6;
+}
+
+#app {
+  min-height: 100vh;
+  background-color: #000000;
+}
+
+/* グローバルコンテナ - 2カラムレイアウト */
+.global-container {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background-color: #000000;
+}
+
+/* ヘッダー */
+header {
+  background-color: #1a1a1a;
+  padding: 1.5rem;
+  border-bottom: 2px solid #00ccff;
+  text-align: center;
+}
+
+header h1 {
+  color: #00ccff;
+  font-size: 1.8rem;
+}
+
+/* メインコンテナ内部 - 左右のレイアウト */
+.main-wrapper {
+  display: flex;
+  flex: 1;
+}
+
+/* 左サイドバー */
+.global-nav {
+  width: 180px;
+  background-color: #0a0a0a;
+  padding: 1rem;
+  border-right: 2px solid #666;
+  overflow-y: auto;
+  min-height: calc(100vh - 100px);
+}
+
+.global-nav a {
+  display: block;
+  color: #00ccff;
+  text-decoration: none;
+  padding: 0.5rem 0;
+  font-size: 0.9rem;
+  border-bottom: 1px dotted #444;
+  transition: color 0.2s;
+}
+
+.global-nav a:hover {
+  color: #00ffff;
+  padding-left: 0.5rem;
+}
+
+/* ナビゲーションセクション */
+.nav-section {
+  margin-bottom: 1.5rem;
+  border: 1px solid #666;
+  padding: 0.75rem;
+  background-color: #0a0a0a;
+}
+
+.nav-section h3 {
+  color: #00ccff;
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
+  border-bottom: 1px solid #444;
+}
+
+.nav-section a {
+  border: none;
+  padding: 0.3rem 0 0.3rem 1rem;
+  font-size: 0.85rem;
+}
+
+/* アクセスカウンター */
+.counter-widget {
+  margin: 1rem 0;
+  padding: 1rem;
+  background-color: #1a1a1a;
+  border: 2px inset #666;
+  text-align: center;
+}
+
+.counter-widget h3 {
+  color: #00ccff;
+  font-size: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.counter-display {
+  font-family: 'Courier New', monospace;
+  font-size: 1.5rem;
+  letter-spacing: 0.1em;
+  color: #00ff00;
+  text-shadow: 0 0 10px #00ff00;
+  background-color: #0a0a0a;
+  padding: 0.5rem;
+  margin: 0.5rem 0;
+  border: 1px solid #00ff00;
+  font-weight: bold;
+}
+
+.counter-label {
+  font-size: 0.7rem;
+  color: #888;
+}
+
+/* メインコンテンツエリア */
+.content {
+  flex: 1;
+  padding: 2rem;
+  background-color: #000000;
+  overflow-y: auto;
+}
+
+/* ページコンテナ */
+.page {
+  background-color: #0a0a0a;
+  color: #ffffff;
+  padding: 1.5rem;
+  border: 2px solid #666;
+}
+
+.page h1 {
+  color: #00ccff;
+  margin-bottom: 0.5rem;
+  font-size: 1.5rem;
+  border-bottom: 2px solid #666;
+  padding-bottom: 0.5rem;
+}
+
+.page h2 {
+  color: #00ccff;
+  font-size: 1rem;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.page p {
+  margin-bottom: 0.75rem;
+}
+
+.page ul,
+.page ol {
+  margin-left: 2rem;
+  margin-bottom: 1rem;
+}
+
+.page li {
+  margin-bottom: 0.3rem;
+}
+
+/* スレッド一覧 */
+.thread-list {
+  margin: 1rem 0;
+}
+
+.thread-row {
+  display: flex;
+  gap: 1rem;
+  padding: 0.5rem;
+  border-bottom: 1px dotted #444;
+  align-items: center;
+}
+
+.thread-id {
+  color: #888;
+  font-size: 0.85rem;
+  min-width: 40px;
+}
+
+.thread-title {
+  color: #00ccff;
+  flex: 1;
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.thread-title:hover {
+  color: #00ffff;
+  text-decoration: underline;
+}
+
+.thread-count {
+  color: #888;
+  font-size: 0.85rem;
+  min-width: 30px;
+  text-align: right;
+}
+
+.thread-date {
+  color: #666;
+  font-size: 0.8rem;
+  min-width: 90px;
+  text-align: right;
+}
+
+/* スレッド個別ページ */
+.posts {
+  margin: 1rem 0;
+}
+
+.post {
+  padding: 1rem;
+  margin-bottom: 1rem;
+  border: 1px solid #444;
+  background-color: #0a0a0a;
+}
+
+.post-header {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px dotted #444;
+  font-size: 0.9rem;
+}
+
+.post-no {
+  color: #00ccff;
+  font-weight: bold;
+}
+
+.post-name {
+  color: #888;
+}
+
+.post-date {
+  color: #666;
+  font-size: 0.85rem;
+}
+
+.post-content {
+  line-height: 1.8;
+}
+
+/* 日記リスト */
+.diary-list {
+  margin: 1rem 0;
+}
+
+.diary-entry {
+  display: flex;
+  gap: 1rem;
+  padding: 0.5rem;
+  border-bottom: 1px dotted #444;
+  align-items: center;
+}
+
+.diary-date {
+  color: #888;
+  font-size: 0.85rem;
+  min-width: 90px;
+}
+
+.diary-title {
+  color: #00ccff;
+  text-decoration: none;
+  flex: 1;
+  transition: color 0.2s;
+}
+
+.diary-title:hover {
+  color: #00ffff;
+  text-decoration: underline;
+}
+
+/* 日記詳細ページ */
+.diary-content {
+  background-color: #1a1a1a;
+  padding: 1.5rem;
+  margin: 1rem 0;
+  border: 1px solid #444;
+  line-height: 2;
+  white-space: pre-wrap;
+}
+
+.diary-nav {
+  text-align: center;
+  margin: 1rem 0;
+}
+
+.diary-nav a {
+  color: #00ccff;
+  text-decoration: none;
+  margin: 0 0.5rem;
+  transition: color 0.2s;
+}
+
+.diary-nav a:hover {
+  color: #00ffff;
+  text-decoration: underline;
+}
+
+/* 最新リスト（ホーム用） */
+.recent-list {
+  margin: 0.75rem 0;
+}
+
+.diary-item,
+.thread-item {
+  display: flex;
+  gap: 1rem;
+  padding: 0.4rem;
+  border-bottom: 1px dotted #444;
+  align-items: center;
+  font-size: 0.9rem;
+}
+
+.date,
+.thread-id {
+  color: #888;
+  min-width: 85px;
+  font-size: 0.85rem;
+}
+
+.diary-item a,
+.thread-item a {
+  color: #00ccff;
+  text-decoration: none;
+  flex: 1;
+  transition: color 0.2s;
+}
+
+.diary-item a:hover,
+.thread-item a:hover {
+  color: #00ffff;
+  text-decoration: underline;
+}
+
+.thread-posts {
+  color: #888;
+  font-size: 0.8rem;
+}
+
+/* バナーグリッド - リンク集 */
+.banner-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+  gap: 1rem;
+  margin: 1rem 0;
+}
+
+.banner-item {
+  text-decoration: none;
+  display: block;
+  transition: transform 0.2s;
+}
+
+.banner-item:hover {
+  transform: scale(1.05);
+}
+
+.banner-content {
+  aspect-ratio: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #666;
+  padding: 0.5rem;
+  text-align: center;
+  color: #fff;
+  font-size: 0.75rem;
+}
+
+.banner-emoji {
+  font-size: 2rem;
+  margin-bottom: 0.25rem;
+}
+
+.banner-title {
+  font-weight: bold;
+  word-break: break-all;
+}
+
+/* 資料室リスト */
+.resources-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin: 1rem 0;
+}
+
+.resource-item {
+  padding: 1rem;
+  background-color: #1a1a1a;
+  border: 1px solid #444;
+}
+
+.resource-item h3 {
+  color: #00ccff;
+  font-size: 0.95rem;
+  margin-bottom: 0.5rem;
+}
+
+.resource-item p {
+  color: #ccc;
+  font-size: 0.9rem;
+}
+
+/* 倉庫グリッド */
+.warehouse-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: 1.5rem;
+  margin: 1.5rem 0;
+}
+
+.warehouse-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  border: 2px solid #666;
+  background-color: #1a1a1a;
+  cursor: pointer;
+  transition: all 0.3s;
+  text-align: center;
+}
+
+.warehouse-item.unlocked {
+  border-color: #00ccff;
+  background-color: #0a0a0a;
+}
+
+.warehouse-item.unlocked:hover {
+  border-color: #00ffff;
+  box-shadow: 0 0 10px rgba(0, 204, 255, 0.3);
+  transform: translateY(-2px);
+}
+
+.warehouse-item.locked {
+  border-color: #666;
+  background-color: #0a0a0a;
+  opacity: 0.7;
+}
+
+.warehouse-image {
+  font-size: 2.5rem;
+  margin-bottom: 0.5rem;
+  display: block;
+}
+
+.warehouse-title {
+  font-size: 0.85rem;
+  color: #ccc;
+  font-weight: bold;
+  word-break: break-all;
+}
+
+.warehouse-item.unlocked .warehouse-title {
+  color: #00ccff;
+}
+
+/* フォームスタイル */
+.admin-form,
+.case-form {
+  margin: 1rem 0;
+  padding: 1rem;
+  background-color: #1a1a1a;
+  border: 1px solid #666;
+}
+
+.admin-form label,
+.case-form label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: bold;
+  color: #00ccff;
+  font-size: 0.9rem;
+}
+
+.admin-form input,
+.case-form input,
+.admin-form textarea,
+.case-form textarea {
+  display: block;
+  width: 100%;
+  padding: 0.5rem;
+  background-color: #0a0a0a;
+  color: #ffffff;
+  border: 1px solid #666;
+  font-family: 'MS Pゴシック', 'Courier New', monospace;
+  font-size: 0.9rem;
+  margin-bottom: 0.75rem;
+}
+
+.admin-form input:focus,
+.case-form input:focus,
+.admin-form textarea:focus,
+.case-form textarea:focus {
+  outline: none;
+  border-color: #00ccff;
+  box-shadow: 0 0 5px rgba(0, 204, 255, 0.3);
+}
+
+.admin-form button,
+.case-form button {
+  padding: 0.5rem 1rem;
+  background-color: #00ccff;
+  color: #000;
+  border: none;
+  cursor: pointer;
+  font-weight: bold;
+  font-family: 'MS Pゴシック', monospace;
+  transition: background-color 0.2s;
+}
+
+.admin-form button:hover,
+.case-form button:hover {
+  background-color: #00ffff;
+}
+
+#newThreadForm {
+  background-color: #1a1a1a;
+  padding: 1rem;
+  border: 1px solid #666;
+  margin: 1rem 0;
+}
+
+#newThreadForm label {
+  color: #00ccff;
+  display: block;
+  margin-bottom: 0.3rem;
+  font-size: 0.9rem;
+}
+
+#newThreadForm input,
+#newThreadForm textarea {
+  width: 100%;
+  padding: 0.5rem;
+  background-color: #0a0a0a;
+  color: #ffffff;
+  border: 1px solid #666;
+  font-family: inherit;
+  margin-bottom: 0.75rem;
+}
+
+#postForm {
+  background-color: #1a1a1a;
+  padding: 1rem;
+  border: 1px solid #666;
+  margin: 1rem 0;
+}
+
+#postForm label {
+  color: #00ccff;
+  display: block;
+  margin-bottom: 0.3rem;
+  font-size: 0.9rem;
+}
+
+#postForm input,
+#postForm textarea {
+  width: 100%;
+  padding: 0.5rem;
+  background-color: #0a0a0a;
+  color: #ffffff;
+  border: 1px solid #666;
+  font-family: inherit;
+  margin-bottom: 0.75rem;
+}
+
+/* エラーメッセージ */
+.error {
+  color: #ff6666;
+  margin-top: 1rem;
+  padding: 0.75rem;
+  background-color: #2a0a0a;
+  border-left: 3px solid #ff4444;
+}
+
+/* Case リスト */
+.case-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+
+.case-item {
+  padding: 0.75rem 1rem;
+  background-color: #1a1a1a;
+  border: 1px solid #666;
+}
+
+.case-item a {
+  color: #00ccff;
+  text-decoration: none;
+  font-weight: bold;
+  display: block;
+  transition: color 0.2s;
+}
+
+.case-item a:hover {
+  color: #00ffff;
+  text-decoration: underline;
+}
+
+/* ログアウトエリア */
+.logout-area {
+  margin: 1rem 0;
+  text-align: center;
+}
+
+.logout-btn {
+  display: inline-block;
+  padding: 0.5rem 1rem;
+  background-color: #666;
+  color: #ffffff;
+  text-decoration: none;
+  border: 1px solid #888;
+  transition: all 0.2s;
+  cursor: pointer;
+}
+
+.logout-btn:hover {
+  background-color: #666;
+  color: #ffffff;
+  text-decoration: none;
+}
+
+/* サブテキスト */
+.sub {
+  color: #888;
+  margin-top: 2rem;
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+
+/* 完了メッセージ */
+.completion-message {
+  color: #ffcc00;
+  margin: 1rem 0;
+  font-style: italic;
+  font-weight: bold;
+}
+
+/* ログアウトコンテナ */
+.logout-container {
+  text-align: center;
+  padding: 4rem 2rem;
+}
+
+/* レスポンシブ */
+@media (max-width: 768px) {
+  .global-nav {
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .content {
+    padding: 1rem;
+  }
+
+  .page {
+    padding: 1rem;
+  }
+
+  .page h1 {
+    font-size: 1.5rem;
+  }
+
+  .admin-form input,
+  .case-form input {
+    max-width: 100%;
+  }
+}
+
+/* 水平線 */
+hr {
+  border: none;
+  border-top: 1px solid #666;
+  margin: 1.5rem 0;
+}

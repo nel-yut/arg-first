@@ -1,0 +1,50 @@
+version: '3'
+
+services:
+  base:
+    build:
+      context: .
+      dockerfile: Dockerfile_base
+    container_name: base
+    environment:
+      - AWS_REGION=ap-northeast-1
+    volumes: 
+      - ..:/workspace:cached
+      - bash_history:/commandhistory
+#      - vscode-extensions:/home/vscode/.vscode-server/extensions
+#      - vscode-extensions-insiders:/home/vscode/.vscode-server-insiders/extensions
+    command: /bin/sh -c "while sleep 1000; do :; done"
+  postgres:
+    build:
+      context: .
+      dockerfile: Dockerfile_postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "15432:5432"
+    expose:
+      - "15432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_DB: d2pf_common
+      LANG: ja_JP.utf8
+      TZ: Asia/Tokyo
+  auth_python:
+    build:
+      context: .
+      dockerfile: Dockerfile_python
+    container_name: auth_python
+    environment:
+      - AWS_REGION=ap-northeast-1
+    volumes:
+      - ..:/workspace:cached
+      - bash_history:/commandhistory
+      - vscode-extensions:/home/vscode/.vscode-server/extensions
+      - vscode-extensions-insiders:/home/vscode/.vscode-server-insiders/extensions
+    command: /bin/sh -c "while sleep 1000; do :; done"
+volumes:
+  postgres_data:
+  bash_history:
+  vscode-extensions:
+  vscode-extensions-insiders:

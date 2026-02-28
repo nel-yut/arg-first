@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ミニARG - 謎解きゲーム</title>
+    <link rel="stylesheet" href="css/style.css" />
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <!-- スクリプト読み込み順序が重要 -->
+    <!-- 1. storage.js - 状態管理 -->
+    <script src="js/storage.js"></script>
+    <!-- 2. counter.js - アクセスカウンター -->
+    <script src="js/counter.js"></script>
+    <!-- 3. threads.js - BBS スレッド管理 -->
+    <script src="js/threads.js"></script>
+    <!-- 4. diary.js - 日記管理 -->
+    <script src="js/diary.js"></script>
+    <!-- 5. banners.js - バナー管理 -->
+    <script src="js/banners.js"></script>
+    <!-- 6. templates.js - ページテンプレート -->
+    <script src="js/templates.js"></script>
+    <!-- 7. router.js - ルーティング -->
+    <script src="js/router.js"></script>
+    <!-- 8. app.js - メインアプリケーション -->
+    <script src="js/app.js"></script>
+  </body>
+</html>

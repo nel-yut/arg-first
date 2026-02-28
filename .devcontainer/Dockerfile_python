@@ -1,0 +1,23 @@
+FROM mcr.microsoft.com/devcontainers/python:3.12-bookworm
+
+COPY bashrc_add /bashrc_add
+
+ARG USERNAME=vscode
+RUN mkdir /commandhistory \
+    && mkdir -p /home/$USERNAME/.vscode-server/extensions \
+        /home/$USERNAME/.vscode-server-insiders/extensions \
+    && chown -R $USERNAME \
+        /home/$USERNAME/.vscode-server \
+        /home/$USERNAME/.vscode-server-insiders \
+    && touch /commandhistory/.bash_history \
+    && chown -R $USERNAME /commandhistory \
+    && cat bashrc_add >> "/home/$USERNAME/.bashrc" \
+    && rm bashrc_add \
+    && apt update \
+    && apt install icu-devtools -y
+USER $USERNAME
+RUN curl --proto '=https' --tlsv1.2 -fsSL https://static.pantsbuild.org/setup/get-pants.sh | bash \
+    && pip install awscli-local
+
+EXPOSE 8000
+EXPOSE 3000

@@ -1,0 +1,53 @@
+{
+  "name": "arg-first",
+  "dockerComposeFile": "docker-compose.yml",
+  "runServices": ["base", "postgres", "auth_python"],
+  "service": "auth_python",
+  "workspaceFolder": "/workspace",
+  "shutdownAction": "stopCompose",
+  "mounts": [
+    "source=poetry-cache,target=/home/vscode/.cache/pypoetry,type=volume",
+    "source=venv-cache,target=${containerWorkspaceFolder}/.venv,type=volume",
+    "source=frontend-app-node-modules-cache,target=${containerWorkspaceFolder}/frontend-app/node_modules,type=volume",
+    "source=build,target=${containerWorkspaceFolder}/custom-message-lambda/build,type=volume",
+    "source=npm-cache,target=/home/vscode/.npm,type=volume",
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.aws,target=/home/vscode/.aws,type=bind,consistency=cached"
+  ],
+  "postCreateCommand": ".devcontainer/postCreateCommand.sh ${containerWorkspaceFolder}",
+  "features": {
+    "ghcr.io/devcontainers/features/aws-cli:1": {},
+    "ghcr.io/devcontainers/features/docker-in-docker": {},
+    "ghcr.io/devcontainers/features/terraform:1": {},
+    "ghcr.io/devcontainers/features/node:1": {},
+    "ghcr.io/devcontainers-extra/features/poetry:2": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "mhutchie.git-graph",
+        "MS-CEINTL.vscode-language-pack-ja",
+        "ms-vsliveshare.vsliveshare",
+        "hediet.vscode-drawio",
+        "GitHub.vscode-pull-request-github",
+        "yzhang.markdown-all-in-one",
+        "esbenp.prettier-vscode",
+        "Arjun.swagger-viewer",
+        "Gruntfuggly.todo-tree",
+        "yoyo930021.vuter",
+        "ms-playwright.playwright",
+        "hashicorp.terraform",
+        "eamodio.gitlens",
+        "bradlc.vscode-tailwindcss",
+        "Selemondev.shadcn-vue",
+        "MermaidChart.vscode-mermaid-chart"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/workspace/custom-message-lambda/.venv/bin/python",
+        "terminal.integrated.shell.linux": "/bin/bash"
+      }
+    }
+  },
+  "remoteUser": "vscode"
+}
