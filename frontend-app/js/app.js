@@ -3,9 +3,12 @@
  */
 
 document.addEventListener('DOMContentLoaded', () => {
-  // 1. 状態を localStorage から読み込む
+  // 1. 状態を sessionStorage / localStorage から読み込む
   GameState.load()
+  BBSThreads.load()
+  DiaryEntries.load()
   AccessCounter.load()
+  GameState.scheduleLockExpiration()
 
   // 2. 初期ページを表示
   const initialHash = window.location.hash || '#/'

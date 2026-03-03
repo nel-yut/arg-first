@@ -3,6 +3,64 @@
  */
 
 const PageTemplates = {
+  _admin999TimerId: null,
+  _azusaFollowupTimerId: null,
+
+  hasAnyTriggerFlag() {
+    return (
+      GameState.grim_keyword_entered ||
+      GameState.grim_to_admin_entered ||
+      GameState.grim_to_xxx_entered
+    )
+  },
+
+  toMojibake() {
+    return '譁�ｭ怜喧縺悟､悶∴縺ｾ縺励◆'
+  },
+
+  scheduleAzusaFollowup() {
+    const messages = [
+      'ぐりむくん、私のこと覚えてくれてたんだね。',
+      'ただ、少しかまってほしかっただけ。わがまま言ってごめん。',
+      '私はもう大丈夫。無事です。もう勝手にいじったりしません。',
+    ]
+
+    if (!GameState.azusa_followup_started || GameState.azusa_followup_done) {
+      return
+    }
+    if (this._azusaFollowupTimerId) {
+      return
+    }
+
+    this._azusaFollowupTimerId = setTimeout(() => {
+      this._azusaFollowupTimerId = null
+
+      if (!GameState.azusa_followup_started || GameState.azusa_followup_done) {
+        return
+      }
+
+      const step = GameState.azusa_followup_step || 0
+      if (step >= messages.length) {
+        GameState.completeAzusaFollowup()
+        return
+      }
+
+      BBSThreads.addPost(999, '管理人', messages[step])
+      GameState.advanceAzusaFollowupStep()
+
+      if (window.location.hash === '#/bbs/thread/999') {
+        Router.navigate('bbs/thread/999')
+      }
+
+      if (GameState.azusa_followup_step >= messages.length) {
+        GameState.completeAzusaFollowup()
+        return
+      }
+
+      this.scheduleAzusaFollowup()
+    }, 4000)
+  },
+
   /**
    * ホームページ
    */
@@ -10,29 +68,28 @@ const PageTemplates = {
     path: '#/',
     requiresAuth: false,
     render() {
-      const recentDiary = DiaryEntries.getAll().slice(0, 5)
-      const recentThreads = BBSThreads.getAll().slice(0, 3)
+      // 「最新の日記」は常に公開のみ表示
+      const recentDiary = DiaryEntries.getAll(true).slice(0, 5)
+      const recentThreads = BBSThreads.getAll()
+        .filter(t => GameState.grim_to_admin_entered || t.id !== 999)
+        .slice(0, 3)
 
       let diaryHtml = recentDiary
         .map(
-          d => `
-        <div class="diary-item">
+          d => `<div class="diary-item">
           <span class="date">${d.date}</span>
           <a href="#/diary/${d.date}">${d.title}</a>
-        </div>
-      `
+        </div>`
         )
         .join('')
 
       let threadsHtml = recentThreads
         .map(
-          t => `
-        <div class="thread-item">
+          t => `<div class="thread-item">
           <span class="thread-id">[${t.id}]</span>
           <a href="#/bbs/thread/${t.id}">${t.title}</a>
           <span class="thread-posts">(${t.posts.length})</span>
-        </div>
-      `
+        </div>`
         )
         .join('')
 
@@ -73,7 +130,7 @@ const PageTemplates = {
     path: '#/bbs',
     requiresAuth: false,
     render() {
-      const threads = BBSThreads.getAll()
+      const threads = BBSThreads.getAll().filter(t => GameState.grim_to_admin_entered || t.id !== 999)
       const threadHtml = threads
         .map(
           t => `
@@ -87,30 +144,15 @@ const PageTemplates = {
         )
         .join('')
 
-      let newThreadFormHtml = ''
-      if (GameState.session_auth) {
-        newThreadFormHtml = `
-          <hr />
-          <h2>【 新規スレッド 】</h2>
-          <form id="newThreadForm">
-            <label for="newThreadTitle">スレッドタイトル：</label>
-            <input id="newThreadTitle" type="text" placeholder="スレッド名を入力" />
-            <button type="submit">　作成　</button>
-          </form>
-        `
-      }
-
-      return `
+        return `
         <div class="page bbs">
-          <h1>掲示板</h1>
+          <h1>BBS</h1>
           <p>スレッド一覧</p>
           <hr />
           
           <div class="thread-list">
             ${threadHtml}
           </div>
-          
-          ${newThreadFormHtml}
 
           <hr />
           <p class="sub">
@@ -120,20 +162,7 @@ const PageTemplates = {
       `
     },
     onMount() {
-      // 管理者権限がある場合のみ、新規スレッド作成フォームを有効化
-      if (GameState.session_auth) {
-        const form = document.getElementById('newThreadForm')
-        if (form) {
-          form.addEventListener('submit', (e) => {
-            e.preventDefault()
-            const title = document.getElementById('newThreadTitle').value.trim()
-            if (title) {
-              const newId = BBSThreads.createThread(title)
-              Router.navigate(`bbs/thread/${newId}`)
-            }
-          })
-        }
-      }
+      // no-op
     },
   },
 
@@ -145,18 +174,61 @@ const PageTemplates = {
     requiresAuth: false,
     render(params) {
       const threadId = parseInt(params.id)
-      const thread = BBSThreads.getById(threadId)
+      let thread = BBSThreads.getById(threadId)
 
-      if (!thread) {
+      if (!thread || (!GameState.grim_to_admin_entered && threadId === 999)) {
         return '<div class="page"><h1>スレッドが見つかりません</h1></div>'
       }
 
-      const postsHtml = thread.posts
+      // 999スレは1234到達時に最終投稿を描画前に確実反映する
+      if (threadId === 999 && (AccessCounter.get() === 1234 || GameState.counter_1234_reached)) {
+        const finalAdminComment = '私の名前なんて知らないくせに'
+        if (AccessCounter.get() === 1234) {
+          GameState.markCounter1234Reached()
+        }
+        const hasFinalPost = thread.posts.some(
+          (p) => p.name === '管理人' && p.content === finalAdminComment
+        )
+        if (!hasFinalPost) {
+          BBSThreads.addPost(999, '管理人', finalAdminComment)
+          thread = BBSThreads.getById(999)
+        }
+      }
+
+      const visiblePosts = thread.posts.filter((p) => {
+        const isSpecialHiddenPost =
+          threadId === 997 &&
+          p.name === '管理人' &&
+          p.content === '誰が彼女を閉じ込めたんでしょうか'
+
+        // 特殊レスは「謎フラグ + 管理者ログイン」の両方でのみ表示
+        if (isSpecialHiddenPost && !(GameState.mystery_diary_viewed && GameState.session_auth)) {
+          return false
+        }
+        return true
+      })
+
+      // 管理者フラグ時、キリ番スレ(id: 993)の id:11 を差し込み表示
+      let displayPosts = visiblePosts
+      if (threadId === 993 && GameState.grim_to_admin_entered) {
+        displayPosts = visiblePosts.map((p) => {
+          if (p.id === 11) {
+            return {
+              ...p,
+              name: 'あずさ',
+              content: '1234通過しました！',
+            }
+          }
+          return p
+        })
+      }
+
+      const postsHtml = displayPosts
         .map(
-          (p, idx) => `
+          (p) => `
         <div class="post">
           <div class="post-header">
-            <span class="post-no">【 ${idx + 1} 】</span>
+            <span class="post-no">【 ${p.id} 】</span>
             <span class="post-name">${p.name}</span>
             <span class="post-date">${p.date}</span>
           </div>
@@ -166,18 +238,60 @@ const PageTemplates = {
         )
         .join('')
 
-      // 管理者権限かつ雑談スレ（id: 998）の場合のみ投稿フォームを表示
+      // 犯人捜しスレ（id: 997）は、管理人ログイン + 日記「謎」閲覧で投稿解放
+      // ただし「ぐりむ / グリム」入力後は再度閉鎖
+      const canPostTo997 =
+        GameState.session_auth &&
+        threadId === 997 &&
+        GameState.mystery_diary_viewed &&
+        !GameState.grim_keyword_entered &&
+        !GameState.bbs_reply_consumed
+
+      // [999] は「ぐりむ→管理者/管理人」後に 993 を閲覧したら投稿解放
+      const canPostTo999 =
+        GameState.session_auth &&
+        threadId === 999 &&
+        GameState.grim_to_admin_entered &&
+        GameState.kiriban_993_viewed
+
+      const canPostToThread = canPostTo997 || canPostTo999
+
+      // 既定では全スレッド閉鎖表示
+      let closedNoticeHtml = `
+        <p class="thread-closed-notice">このスレッドは閉じられました。投稿はできません。</p>
+      `
+      if (canPostToThread) {
+        closedNoticeHtml = ''
+      }
+
+      // 条件達成時のみ投稿フォームを表示
       let postFormHtml = ''
-      if (GameState.session_auth && threadId === 998) {
-        postFormHtml = `
-          <hr />
-          <h2>【 レス投稿 】</h2>
-          <form id="postForm">
-            <label for="postContent">本文：</label>
-            <textarea id="postContent" placeholder="レスを入力" rows="4"></textarea>
-            <button type="submit">　送信　</button>
-          </form>
-        `
+      if (canPostToThread) {
+        if (threadId === 999) {
+          postFormHtml = `
+            <hr />
+            <h2>【 レス投稿 】</h2>
+            <form id="postForm">
+              <label for="postName">名前：</label>
+              <input id="postName" type="text" value="ぐりむ" readonly />
+              <label for="postContent">本文：</label>
+              <textarea id="postContent" placeholder="レスを入力" rows="4"></textarea>
+              <button type="submit">　送信　</button>
+            </form>
+          `
+        } else {
+          postFormHtml = `
+            <hr />
+            <h2>【 レス投稿 】</h2>
+            <form id="postForm">
+              <label for="postName">名前：</label>
+              <input id="postName" type="text" value="名無し" />
+              <label for="postContent">本文：</label>
+              <textarea id="postContent" placeholder="レスを入力" rows="4"></textarea>
+              <button type="submit">　送信　</button>
+            </form>
+          `
+        }
       }
 
       return `
@@ -188,30 +302,209 @@ const PageTemplates = {
           <div class="posts">
             ${postsHtml}
           </div>
-          
+
+          ${closedNoticeHtml}
           ${postFormHtml}
 
           <hr />
           <p class="sub">
-            <small>Thread: ${threadId} | Posts: ${thread.posts.length} | Created: ${thread.createdAt}</small>
+            <small>Thread: ${threadId} | Posts: ${displayPosts.length} | Created: ${thread.createdAt}</small>
           </p>
         </div>
       `
     },
     onMount(params) {
       const threadId = parseInt(params.id)
-      // 管理者権限かつ雑談スレの場合のみ投稿機能を有効化
-      if (GameState.session_auth && threadId === 998) {
+      const finalAdminComment = '私の名前なんて知らないくせに'
+
+      // 999スレで1234到達時、最終文言を必ず1回反映
+      if (threadId === 999 && (AccessCounter.get() === 1234 || GameState.counter_1234_reached)) {
+        const thread = BBSThreads.getById(999)
+        if (thread) {
+          if (AccessCounter.get() === 1234) {
+            GameState.markCounter1234Reached()
+          }
+          const exists = thread.posts.some(
+            (p) => p.name === '管理人' && p.content === finalAdminComment
+          )
+          if (!exists) {
+            BBSThreads.addPost(999, '管理人', finalAdminComment)
+            Router.navigate('bbs/thread/999')
+            return
+          }
+        }
+      }
+
+      const canPostTo997 =
+        GameState.session_auth &&
+        threadId === 997 &&
+        GameState.mystery_diary_viewed &&
+        !GameState.grim_keyword_entered &&
+        !GameState.bbs_reply_consumed
+
+      const canPostTo999 =
+        GameState.session_auth &&
+        threadId === 999 &&
+        GameState.grim_to_admin_entered &&
+        GameState.kiriban_993_viewed
+
+      const canPostToThread = canPostTo997 || canPostTo999
+
+      // 993 を閲覧したらフラグを立てる（管理者ルート）
+      if (threadId === 993 && GameState.session_auth && GameState.grim_to_admin_entered) {
+        GameState.markKiriban993Viewed()
+      }
+
+      if (threadId === 999) {
+        PageTemplates.scheduleAzusaFollowup()
+      }
+
+      if (threadId === 999 && canPostTo999) {
+        const thread = BBSThreads.getById(999)
+        if (thread) {
+          const adminWaitingComments = [
+            '私だって踏んだのに',
+            '私のこと無視してたのに',
+            'ずっとここにいたのに',
+            '誰も私の名前を呼ばない',
+            '私の順番だったはずなのに',
+            '見えてるのに見えてないふりをした',
+            'どうして私だけ数えないの',
+            '私の投稿だけ流れるのが早い',
+            '更新するたびに遠くなる',
+            'ここにいるって何回言えばいいの',
+            '番号だけ増えて私だけ置いていく',
+            '数え方を変えても私は消えない',
+            '聞こえてるなら返事をして',
+            '先に来ていたのは私なのに',
+            '私を見たことにしてよ',
+            'ここは私の場所だったのに',
+            '私の番号を返して',
+            'もう一度だけ数えて',
+          ]
+          const maxAutoPosts = 100
+          const hasAdminPost = (content) =>
+            thread.posts.some((p) => p.name === '管理人' && p.content === content)
+          const autoAdminPostsCount = () =>
+            thread.posts.filter(
+              (p) => p.name === '管理人' && p.content !== finalAdminComment
+            ).length
+
+          if (this._admin999TimerId) {
+            clearTimeout(this._admin999TimerId)
+            this._admin999TimerId = null
+          }
+
+          if (AccessCounter.get() === 1234 || GameState.counter_1234_reached) {
+            // 1234 到達時は待機投稿を停止し、最終投稿のみ1回反映
+            if (AccessCounter.get() === 1234) {
+              GameState.markCounter1234Reached()
+            }
+            if (!hasAdminPost(finalAdminComment)) {
+              BBSThreads.addPost(999, '管理人', finalAdminComment)
+              Router.navigate(`bbs/thread/${threadId}`)
+            }
+          } else {
+            // 1234 未到達時は4秒ごとに1件ずつ投稿（同文繰り返し可、最大100件）
+            const postedCount = autoAdminPostsCount()
+            if (postedCount < maxAutoPosts) {
+              const nextComment = adminWaitingComments[postedCount % adminWaitingComments.length]
+              this._admin999TimerId = setTimeout(() => {
+                if (window.location.hash !== '#/bbs/thread/999') {
+                  return
+                }
+                if (AccessCounter.get() === 1234 || GameState.counter_1234_reached) {
+                  const latestThread = BBSThreads.getById(999)
+                  if (!latestThread) {
+                    return
+                  }
+                  if (AccessCounter.get() === 1234) {
+                    GameState.markCounter1234Reached()
+                  }
+                  const hasFinal = latestThread.posts.some(
+                    (p) => p.name === '管理人' && p.content === finalAdminComment
+                  )
+                  if (!hasFinal) {
+                    BBSThreads.addPost(999, '管理人', finalAdminComment)
+                  }
+                  Router.navigate('bbs/thread/999')
+                  return
+                }
+                const currentThread = BBSThreads.getById(999)
+                if (!currentThread) {
+                  return
+                }
+                const currentPostedCount = currentThread.posts.filter(
+                  (p) => p.name === '管理人' && p.content !== finalAdminComment
+                ).length
+                if (currentPostedCount >= maxAutoPosts) {
+                  return
+                }
+                BBSThreads.addPost(999, '管理人', nextComment)
+                Router.navigate('bbs/thread/999')
+              }, 4000)
+            }
+          }
+        }
+      }
+
+      // 条件達成時のみ投稿機能を有効化
+      if (canPostToThread) {
         const form = document.getElementById('postForm')
         if (form) {
           form.addEventListener('submit', (e) => {
             e.preventDefault()
+
+            const name = document.getElementById('postName').value.trim()
             const content = document.getElementById('postContent').value.trim()
+            const normalized = content.replace(/[、。\s]/g, '')
+
+            if (threadId === 999) {
+              if (AccessCounter.get() !== 1234 && !GameState.counter_1234_reached) {
+                return
+              }
+              if (content === 'あずさ') {
+                BBSThreads.addPost(threadId, 'ぐりむ', content)
+                GameState.startAzusaFollowup()
+                PageTemplates.scheduleAzusaFollowup()
+                Router.navigate(`bbs/thread/${threadId}`)
+              }
+              return
+            }
+
+            const isPattern1 = name === '管理人' && normalized === 'ぐりむ'
+            const isPattern2 = name === 'ぐりむ' && (normalized === '管理者' || normalized === '管理人')
+            const isPattern3 = name === 'ぐりむ' && normalized === 'まいすたー'
+
+            // 入力内容に関係なく、送信操作時点で次レス不可にする
+            GameState.markBbsReplyConsumed()
+
+            if (!(isPattern1 || isPattern2 || isPattern3)) {
+              Router.navigate(`bbs/thread/${threadId}`)
+              return
+            }
 
             if (content) {
-              BBSThreads.addPost(threadId, '名無し', content)
-              // ハッシュ更新せず Router.navigate を直接呼び出し
-              Router.navigate(`bbs/thread/${threadId}`)
+              if (isPattern1) {
+                BBSThreads.addPost(threadId, name, content)
+                GameState.markGrimKeywordEntered()
+                Router.navigate(`bbs/thread/${threadId}`)
+                return
+              }
+
+              if (isPattern2) {
+                BBSThreads.addPost(threadId, name, content)
+                GameState.markGrimToAdminEntered()
+                Router.navigate(`bbs/thread/${threadId}`)
+                return
+              }
+
+              if (isPattern3) {
+                BBSThreads.addPost(threadId, name, content)
+                GameState.markGrimToXxxEntered()
+                Router.navigate(`bbs/thread/${threadId}`)
+                return
+              }
             }
           })
         }
@@ -226,7 +519,7 @@ const PageTemplates = {
     path: '#/bbs/logs',
     requiresAuth: false,
     render() {
-      const threads = BBSThreads.getAll()
+      const threads = BBSThreads.getAll().filter(t => GameState.grim_to_admin_entered || t.id !== 999)
       const threadHtml = threads
         .map(
           t => `
@@ -304,15 +597,21 @@ const PageTemplates = {
     path: '#/diary',
     requiresAuth: false,
     render() {
-      const recentDiary = DiaryEntries.getAll()
+      // 認証状態に応じて、公開のみ表示
+      const isAuth = GameState.session_auth
+      const shouldCorrupt = PageTemplates.hasAnyTriggerFlag()
+      const recentDiary = DiaryEntries.getAll(!isAuth)
       const diaryHtml = recentDiary
         .map(
-          d => `
-        <div class="diary-entry">
+          d => {
+            const displayTitle =
+              shouldCorrupt && d.content.includes('早くみつけて') ? PageTemplates.toMojibake() : d.title
+            return `<div class="diary-entry">
           <span class="diary-date">${d.date}</span>
-          <a href="#/diary/${d.date}" class="diary-title">${d.title}</a>
-        </div>
-      `
+          <a href="#/diary/${d.date}" class="diary-title">${displayTitle}</a>
+          ${isAuth ? (d.isPublic ? '<span class="public-badge">公開</span>' : '<span class="private-badge">非公開</span>') : ''}
+        </div>`
+          }
         )
         .join('')
 
@@ -347,12 +646,20 @@ const PageTemplates = {
     render(params) {
       const date = params.date
       const entry = DiaryEntries.getByDate(date)
+      const isAuth = GameState.session_auth
+      const shouldCorrupt = PageTemplates.hasAnyTriggerFlag()
 
       if (!entry) {
         return '<div class="page"><h1>日記が見つかりません</h1></div>'
       }
 
-      const allEntries = DiaryEntries.getAll()
+      // 非認証時に非公開日記へのアクセスを制限
+      if (!isAuth && !entry.isPublic) {
+        return '<div class="page"><h1>この日記はプライベートです。アクセスできません。</h1></div>'
+      }
+
+      // 認証状態に応じてフィルタリング
+      const allEntries = DiaryEntries.getAll(!isAuth)
       const currentIdx = allEntries.findIndex(e => e.date === date)
       const prevEntry = currentIdx + 1 < allEntries.length ? allEntries[currentIdx + 1] : null
       const nextEntry = currentIdx > 0 ? allEntries[currentIdx - 1] : null
@@ -367,15 +674,19 @@ const PageTemplates = {
       }
       navHtml += '</div>'
 
+      const displayTitle =
+        shouldCorrupt && entry.content.includes('早くみつけて') ? PageTemplates.toMojibake() : entry.title
+      const displayContent =
+        shouldCorrupt && entry.content.includes('早くみつけて') ? PageTemplates.toMojibake() : entry.content
+
       return `
         <div class="page diary-detail">
           <h1>${date}</h1>
-          <h2>${entry.title}</h2>
+          <h2>${displayTitle}</h2>
+          ${!entry.isPublic ? '<span class="private-badge">🔒 プライベート</span>' : '<span class="public-badge">🔓 公開</span>'}
           <hr />
           
-          <div class="diary-content">
-            ${entry.content.replace(/\n/g, '<br>')}
-          </div>
+          <div class="diary-content">${displayContent.replace(/\n/g, '<br>')}</div>
 
           <hr />
           ${navHtml}
@@ -387,7 +698,11 @@ const PageTemplates = {
         </div>
       `
     },
-    onMount() {
+    onMount(params) {
+      const entry = DiaryEntries.getByDate(params.date)
+      if (entry && entry.content.includes('早くみつけて') && GameState.session_auth) {
+        GameState.markMysteryDiaryViewed()
+      }
       AccessCounter.increment()
     },
   },
@@ -400,27 +715,43 @@ const PageTemplates = {
     requiresAuth: false,
     render() {
       const items = [
-        { title: '第一の鍵', image: '🔑', id: 1 },
-        { title: '古い日誌', image: '📖', id: 2 },
-        { title: '謎の手紙', image: '💌', id: 3 },
-        { title: '暗号表', image: '🗝️', id: 4 },
-        { title: '写真', image: '📷', id: 5 },
-        { title: '音声記録', image: '🎵', id: 6 },
+        { title: '朝のひと時', image: 'images/image01.png', id: 1 },
+        { title: 'ちょうどよかった', image: 'images/image02.png', id: 2 },
+        { title: 'いい日の晩御飯', image: 'images/image03.png', id: 3 },
+        { title: 'オフ会参加メンバー！', image: 'images/image04.png', id: 4 },
+        { title: 'オフ会カラオケ！', image: 'images/image05.png', id: 5 },
+        { title: '蜿｣隲�', image: 'images/image06.png', id: 6 },
+        { title: '迥ｯ莠ｺ', image: 'images/image07.png', id: 7 },
+        { title: 'はやくたすけて', image: 'images/image08.png', id: 8 },
+        { title: '縺ｿ縺､縺代◆', image: 'images/image09.png', id: 9 },
       ]
 
+      const visibleItems = items.filter(item => {
+        if (GameState.session_auth) {
+          if (GameState.grim_to_admin_entered) {
+            return item.id <= 9
+          }
+          if (GameState.grim_to_xxx_entered) {
+            return item.id <= 8
+          }
+          return item.id <= 7
+        }
+        return item.id <= 5
+      })
+
       // 管理人権限がない場合は全てロック表示
-      const itemsHtml = items.map(item => {
+      const itemsHtml = visibleItems.map(item => {
         if (GameState.session_auth) {
           return `
             <div class="warehouse-item unlocked">
-              <div class="warehouse-image">${item.image}</div>
+              <div class="warehouse-image"><img src="${item.image}" alt="${item.title}" loading="lazy" /></div>
               <div class="warehouse-title">${item.title}</div>
             </div>
           `
         } else {
           return `
             <div class="warehouse-item locked">
-              <div class="warehouse-image">🔒</div>
+              <div class="warehouse-image"><img src="${item.image}" alt="locked image ${item.id}" loading="lazy" /></div>
               <div class="warehouse-title">???</div>
             </div>
           `
@@ -430,7 +761,6 @@ const PageTemplates = {
       return `
         <div class="page warehouse">
           <h1>倉庫</h1>
-          ${GameState.session_auth ? '<p>管理人権限で倉庫にアクセスしています</p>' : '<p>一部のアイテムはロックされています</p>'}
           <hr />
           
           <div class="warehouse-grid">
@@ -501,6 +831,19 @@ const PageTemplates = {
       }
 
       // 未認証の場合はログインフォーム
+      if (GameState.login_disabled) {
+        return `
+          <div class="page admin">
+            <h1>管理人画面</h1>
+            <p class="error">現在この端末からはログインできません。</p>
+            <hr />
+            <p class="sub">
+              <small>page: Admin | auth: ${GameState.session_auth} | stage: ${GameState.progress_stage} | attempts: ${GameState.loginAttempts}</small>
+            </p>
+          </div>
+        `
+      }
+
       return `
         <div class="page admin">
           <h1>管理人画面</h1>
@@ -520,10 +863,10 @@ const PageTemplates = {
     onMount() {
       // 認証済みなら onMount 処理は不要
       if (GameState.session_auth) return
+      if (GameState.login_disabled) return
 
       const form = document.getElementById('adminForm')
       const passwordInput = document.getElementById('password')
-      const errorMessage = document.getElementById('errorMessage')
       
       if (passwordInput) {
         passwordInput.addEventListener('input', (e) => {
@@ -546,13 +889,43 @@ const PageTemplates = {
             // ハッシュ更新おまで Router.navigate を直接呼び出し
             Router.navigate('admin')
           } else {
-            if (errorMessage) {
-              errorMessage.textContent = 'あいことばが間違っています'
-            }
+            GameState.startNavigationLock()
             document.getElementById('password').value = ''
+            Router.navigate('locked')
           }
         })
       }
+    },
+  },
+
+  /**
+   * 遷移ロック画面
+   */
+  lockdown: {
+    path: '#/locked',
+    requiresAuth: false,
+    render() {
+      const remainingSec = Math.ceil(GameState.getLockRemainingMs() / 1000)
+      return `
+        <div class="page logout-container">
+          <h1>アクセス制限中</h1>
+          <p class="error">ログイン失敗を検知しました。遷移はロックされています。</p>
+          <p>7秒後に初期状態へ戻し、Googleへ遷移します。</p>
+          <p id="lockCountdown">残り ${remainingSec} 秒</p>
+        </div>
+      `
+    },
+    onMount() {
+      const countdownEl = document.getElementById('lockCountdown')
+      if (!countdownEl) return
+
+      const timerId = setInterval(() => {
+        const remainingSec = Math.ceil(GameState.getLockRemainingMs() / 1000)
+        countdownEl.textContent = `残り ${Math.max(0, remainingSec)} 秒`
+        if (remainingSec <= 0) {
+          clearInterval(timerId)
+        }
+      }, 200)
     },
   },
 
@@ -669,6 +1042,23 @@ const PageTemplates = {
     path: '#/logout',
     requiresAuth: false,
     render() {
+      const blockedByPattern1 = GameState.grim_keyword_entered
+      const blockedByPattern23 =
+        (GameState.grim_to_admin_entered || GameState.grim_to_xxx_entered) &&
+        !GameState.azusa_followup_done
+
+      if (blockedByPattern1 || blockedByPattern23) {
+        const errorMessage = blockedByPattern1
+          ? 'やっぱりお前だったんだな、管理人。'
+          : '繝ｭ繧ｰ繧｢繧ｦ繝医↓螟ｱ謨励＠縺ｾ縺励◆'
+        return `
+          <div class="page logout-container">
+            <h1>ログアウト失敗</h1>
+            <p class="error">${errorMessage}</p>
+          </div>
+        `
+      }
+
       return `
         <div class="page logout-container">
           <p>ログアウト処理中...</p>
@@ -676,6 +1066,27 @@ const PageTemplates = {
       `
     },
     onMount() {
+      const blockedByPattern1 = GameState.grim_keyword_entered
+      const blockedByPattern23 =
+        (GameState.grim_to_admin_entered || GameState.grim_to_xxx_entered) &&
+        !GameState.azusa_followup_done
+
+      if (blockedByPattern1) {
+        setTimeout(() => {
+          window.location.href = 'https://www.google.com/'
+        }, 7000)
+        return
+      }
+
+      if (blockedByPattern23) {
+        return
+      }
+
+      if (GameState.azusa_followup_done && !GameState.azusa_apology_diary_created) {
+        DiaryEntries.addAzusaApologyEntry()
+        GameState.markAzusaApologyDiaryCreated()
+      }
+
       GameState.logout()
       setTimeout(() => {
         Router.navigate('admin')

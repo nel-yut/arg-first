@@ -4,19 +4,37 @@
 
 const AccessCounter = {
   key: 'accessCount',
+  customKey: 'accessCountCustom',
+  defaultValue: 2472,
 
   /**
-   * カウンター値を取得（33333固定）
+   * カウンター値を取得
    */
   get() {
-    return 33333
+    const raw = sessionStorage.getItem(this.key)
+    const parsed = Number(raw)
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return Math.floor(parsed)
+    }
+    return this.defaultValue
   },
 
   /**
-   * カウンターをインクリメント（非表示・固定値）
+   * カウンターをインクリメント（このアプリでは値固定）
    */
   increment() {
-    return 33333
+    return this.get()
+  },
+
+  /**
+   * カウンター値を明示的に設定
+   */
+  set(value) {
+    const num = Number(value)
+    if (!Number.isFinite(num) || num < 0) return false
+    sessionStorage.setItem(this.key, String(Math.floor(num)))
+    sessionStorage.setItem(this.customKey, '1')
+    return true
   },
 
   /**
@@ -29,9 +47,20 @@ const AccessCounter = {
    * localStorage から読み込み（初期化用）
    */
   load() {
-    // localStorage がある場合はそのまま、ない場合は初期値 9998 を設定
-    if (!localStorage.getItem(this.key)) {
-      localStorage.setItem(this.key, '9998')
+    // 未カスタム時は毎回 2472 を初期値として適用
+    const isCustom = sessionStorage.getItem(this.customKey) === '1'
+    if (!isCustom) {
+      sessionStorage.setItem(this.key, String(this.defaultValue))
+      sessionStorage.setItem(this.customKey, '0')
+      return
+    }
+
+    // カスタム済みでも値が壊れていたら初期値に戻す
+    const raw = sessionStorage.getItem(this.key)
+    const parsed = Number(raw)
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      sessionStorage.setItem(this.key, String(this.defaultValue))
+      sessionStorage.setItem(this.customKey, '0')
     }
   },
 
