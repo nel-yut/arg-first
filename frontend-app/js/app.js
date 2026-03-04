@@ -5,10 +5,15 @@
 document.addEventListener('DOMContentLoaded', () => {
   // 1. 状態を sessionStorage / localStorage から読み込む
   GameState.load()
+  GameState.markSessionBoot()
   BBSThreads.load()
   DiaryEntries.load()
   AccessCounter.load()
   GameState.scheduleLockExpiration()
+  if (typeof PageTemplates !== 'undefined' && PageTemplates && typeof PageTemplates.preloadMojibakeMap === 'function') {
+    // Load mojibake line mapping early so it is ready by the time global corruption starts.
+    PageTemplates.preloadMojibakeMap()
+  }
 
   // 2. 初期ページを表示
   const initialHash = window.location.hash || '#/'
@@ -25,6 +30,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // カウンター表示更新関数
   function updateCounterDisplay() {
+    if (GameState.global_mojibake) {
+      return
+    }
     const counterDisplay = document.getElementById('counter-display')
     if (counterDisplay) {
       counterDisplay.textContent = AccessCounter.getFormatted()
