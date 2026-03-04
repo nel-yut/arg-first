@@ -2,9 +2,41 @@
  * templates.js - ページテンプレート定義（拡張版）
  */
 
-const PageTemplates = {
-  _admin999TimerId: null,
-  _azusaFollowupTimerId: null,
+	const PageTemplates = {
+	  _admin999TimerId: null,
+	  _azusaFollowupTimerId: null,
+	  _fixedThreadAdminTimerId: null,
+	  _fixedThreadAzusaTimerId: null,
+	  _activeBbsThreadId: null,
+	  _maister997TimerId: null,
+	  _maisterSwapTimerId: null,
+	  _winMsgQueue: [],
+	  _winMsgActive: false,
+	  _mojibakeMap: null,
+	  _mojibakeMapPromise: null,
+
+	  getEndingCode() {
+	    if (GameState.ending_code) return String(GameState.ending_code)
+	    if (GameState.grim_to_xxx_entered) return 'ED-3'
+	    if (GameState.grim_to_admin_entered) return 'ED-2'
+	    if (GameState.grim_keyword_entered) return 'ED-1'
+	    return ''
+	  },
+
+  endingBadgeHtml() {
+    const code = this.getEndingCode()
+    if (!code) return ''
+    return `<div class="ending-badge" data-no-corrupt="1">${code}</div>`
+  },
+
+  _normalizeBbsToken(text) {
+    // For pattern matching: keep only hiragana/katakana/kanji and ASCII letters/digits.
+    // This makes inputs like "うらなみ！" match "うらなみ".
+    return String(text || '')
+      .trim()
+      .replace(/[\s\u3000]+/g, '')
+      .replace(/[^0-9A-Za-z\u3040-\u30FF\u4E00-\u9FFF]/g, '')
+  },
 
   hasAnyTriggerFlag() {
     return (
@@ -16,6 +48,313 @@ const PageTemplates = {
 
   toMojibake() {
     return '譁�ｭ怜喧縺悟､悶∴縺ｾ縺励◆'
+  },
+
+  preloadMojibakeMap() {
+    if (this._mojibakeMapPromise) return this._mojibakeMapPromise
+
+    const load = async () => {
+      try {
+        const [origRes, mojRes] = await Promise.all([
+          fetch('original_strings_mapping.txt', { cache: 'no-store' }),
+          fetch('mojibake.txt', { cache: 'no-store' }),
+        ])
+        if (!origRes.ok || !mojRes.ok) {
+          throw new Error('failed to load mapping files')
+        }
+        const [origText, mojText] = await Promise.all([origRes.text(), mojRes.text()])
+        let orig = origText.split(/\r?\n/)
+        let moj = mojText.split(/\r?\n/)
+        while (orig.length && orig[orig.length - 1] === '') orig.pop()
+        while (moj.length && moj[moj.length - 1] === '') moj.pop()
+        const n = Math.min(orig.length, moj.length)
+        const map = new Map()
+        for (let i = 0; i < n; i++) {
+          const k = String(orig[i] || '').trim()
+          const v = String(moj[i] || '').trim()
+          if (!k || !v) continue
+          map.set(k, v)
+        }
+        this._mojibakeMap = map
+        return map
+      } catch (e) {
+        this._mojibakeMap = null
+        return null
+      }
+    }
+
+    this._mojibakeMapPromise = load()
+    return this._mojibakeMapPromise
+  },
+
+  corruptString(text) {
+    const original = String(text ?? '')
+    if (!original.trim()) return original
+
+    const base = this.toMojibake()
+    if (!base) return original
+
+    const targetLen = Math.max(1, original.length)
+    const repeated = base.repeat(Math.ceil(targetLen / base.length) + 1)
+    return repeated.slice(0, targetLen)
+  },
+
+  corruptStringPreservingDates(text) {
+    const original = String(text ?? '')
+    if (!original.trim()) return original
+
+    // Line-by-line mapping (original_strings_mapping.txt <-> mojibake.txt)
+    const core = original.trim()
+    if (core && this._mojibakeMap && this._mojibakeMap.has(core)) {
+      const lead = original.match(/^\s*/)?.[0] || ''
+      const tail = original.match(/\s*$/)?.[0] || ''
+      return lead + this._mojibakeMap.get(core) + tail
+    }
+
+    let out = this.corruptString(original)
+
+    // Preserve dates/timestamps: 2008-02-24, 2008-02-24 21:40
+    const re = /\b\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2})?\b/g
+    let m
+    while ((m = re.exec(original)) !== null) {
+      const start = m.index
+      const end = start + m[0].length
+      out = out.slice(0, start) + m[0] + out.slice(end)
+    }
+    return out
+  },
+
+  applyGlobalMojibake(root) {
+    if (!GameState.global_mojibake) return
+
+    const target = root || document.getElementById('app') || document.body
+    if (!target) return
+
+    // Ensure mapping is loading in the background (used when lines match exactly)
+    this.preloadMojibakeMap()
+
+    // Text nodes
+    try {
+      const noCorruptSelector =
+        '#counter-display, .counter-display, .counter-widget, .counter-label, .post-date, .date, .diary-date, [data-no-corrupt="1"]'
+      const walker = document.createTreeWalker(
+        target,
+        NodeFilter.SHOW_TEXT,
+        {
+          acceptNode: node => {
+            if (!node || typeof node.nodeValue !== 'string') return NodeFilter.FILTER_REJECT
+            if (!node.nodeValue.trim()) return NodeFilter.FILTER_REJECT
+            const parent = node.parentElement
+            if (!parent) return NodeFilter.FILTER_REJECT
+            if (parent.closest && parent.closest(noCorruptSelector)) {
+              return NodeFilter.FILTER_REJECT
+            }
+            const tag = parent.tagName
+            if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') {
+              return NodeFilter.FILTER_REJECT
+            }
+            return NodeFilter.FILTER_ACCEPT
+          },
+        },
+        false
+      )
+
+      const nodes = []
+      while (walker.nextNode()) {
+        nodes.push(walker.currentNode)
+      }
+      for (const node of nodes) {
+        node.nodeValue = this.corruptStringPreservingDates(node.nodeValue)
+      }
+    } catch (error) {
+      // Ignore; corruption is best-effort.
+    }
+
+    // Attributes that are commonly visible (or exposed in UI)
+    try {
+      const attrNames = ['title', 'placeholder', 'aria-label']
+      const els = target.querySelectorAll('[title],[placeholder],[aria-label]')
+      for (const el of els) {
+        for (const name of attrNames) {
+          const v = el.getAttribute(name)
+          if (v && v.trim()) {
+            el.setAttribute(name, this.corruptString(v))
+          }
+        }
+      }
+    } catch (error) {
+      // Ignore; corruption is best-effort.
+    }
+
+    // Form control values:
+    // Do not corrupt `value`, because it breaks interaction and can invalidate story triggers.
+    // (We still corrupt text nodes and common visible attributes like placeholder/title.)
+  },
+
+  winAlert(message, options = {}) {
+    const force = !!options.force
+    const noCorrupt = !!options.noCorrupt
+    if (GameState.dialogs_disabled && !force) {
+      return Promise.resolve('cancel')
+    }
+    if (GameState.dialogs_disable_pending && !options.allowWhenPendingDisable && !force) {
+      return Promise.resolve('cancel')
+    }
+
+    const raw = String(message || '')
+    const text = raw && GameState.global_mojibake && !noCorrupt ? this.corruptString(raw) : raw
+    if (!text) return Promise.resolve('cancel')
+
+    return new Promise((resolve) => {
+      this._winMsgQueue.push({ text, resolve, force, noCorrupt })
+      this._drainWinMsgQueue()
+    })
+  },
+
+  _drainWinMsgQueue() {
+    if (GameState.dialogs_disabled) {
+      // Normally, dialogs are suppressed. But allow "forced" dialogs (used by special routes).
+      this._winMsgQueue = this._winMsgQueue.filter((m) => m && m.force)
+      if (!this._winMsgQueue.length) {
+        return
+      }
+    }
+    if (this._winMsgActive) return
+    const next = this._winMsgQueue.shift()
+    if (!next) return
+    this._winMsgActive = true
+
+    const overlay = document.createElement('div')
+    overlay.className = 'winmsgbox-overlay'
+    if (next.noCorrupt) {
+      // Keep dialogs readable even when global mojibake is active.
+      overlay.setAttribute('data-no-corrupt', '1')
+    }
+
+    const box = document.createElement('div')
+    box.className = 'winmsgbox'
+    box.setAttribute('role', 'dialog')
+    box.setAttribute('aria-modal', 'true')
+    if (next.noCorrupt) {
+      box.setAttribute('data-no-corrupt', '1')
+    }
+
+    const header = document.createElement('div')
+    header.className = 'winmsgbox-header'
+
+    const closeBtn = document.createElement('button')
+    closeBtn.className = 'winmsgbox-close'
+    closeBtn.type = 'button'
+    closeBtn.setAttribute('aria-label', 'Close')
+    closeBtn.textContent = '×'
+
+    header.appendChild(closeBtn)
+
+    const body = document.createElement('div')
+    body.className = 'winmsgbox-body'
+
+    const icon = document.createElement('div')
+    icon.className = 'winmsgbox-icon'
+    icon.innerHTML = `
+      <svg width="44" height="44" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M32 6 L60 56 H4 Z" fill="#ffd34d" stroke="#c49a16" stroke-width="2"></path>
+        <rect x="29" y="22" width="6" height="18" fill="#1a1a1a"></rect>
+        <rect x="29" y="44" width="6" height="6" fill="#1a1a1a"></rect>
+      </svg>
+    `
+
+    const msg = document.createElement('div')
+    msg.className = 'winmsgbox-message'
+    msg.textContent = next.text
+
+    body.appendChild(icon)
+    body.appendChild(msg)
+
+    const actions = document.createElement('div')
+    actions.className = 'winmsgbox-actions'
+
+    const mkBtn = (id, label, hotkey) => {
+      const b = document.createElement('button')
+      b.className = 'winmsgbox-btn'
+      b.type = 'button'
+      b.dataset.result = id
+      b.dataset.hotkey = hotkey || ''
+      b.textContent = label
+      return b
+    }
+
+    const btnYes = mkBtn('yes', 'はい(Y)', 'y')
+    const btnNo = mkBtn('no', 'いいえ(N)', 'n')
+    const btnCancel = mkBtn('cancel', 'キャンセル', 'escape')
+
+    actions.appendChild(btnYes)
+    actions.appendChild(btnNo)
+    actions.appendChild(btnCancel)
+
+    box.appendChild(header)
+    box.appendChild(body)
+    box.appendChild(actions)
+    overlay.appendChild(box)
+
+    const cleanup = () => {
+      document.removeEventListener('keydown', onKeydown, true)
+      overlay.remove()
+      this._winMsgActive = false
+      setTimeout(() => this._drainWinMsgQueue(), 0)
+    }
+
+    const finish = (result) => {
+      try {
+        next.resolve(result)
+      } finally {
+        cleanup()
+      }
+    }
+
+    const onKeydown = (e) => {
+      const k = String(e.key || '').toLowerCase()
+      if (k === 'escape') {
+        e.preventDefault()
+        finish('cancel')
+        return
+      }
+      if (k === 'enter') {
+        e.preventDefault()
+        finish('yes')
+        return
+      }
+      if (k === 'y') {
+        e.preventDefault()
+        finish('yes')
+        return
+      }
+      if (k === 'n') {
+        e.preventDefault()
+        finish('no')
+        return
+      }
+    }
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        finish('cancel')
+      }
+    })
+
+    closeBtn.addEventListener('click', () => finish('cancel'))
+    btnYes.addEventListener('click', () => finish('yes'))
+    btnNo.addEventListener('click', () => finish('no'))
+    btnCancel.addEventListener('click', () => finish('cancel'))
+
+    document.addEventListener('keydown', onKeydown, true)
+
+    if (GameState.global_mojibake && !next.noCorrupt) {
+      // Normal dialogs follow the global corruption rules; special dialogs can opt out.
+      this.applyGlobalMojibake(overlay)
+    }
+
+    document.body.appendChild(overlay)
+    btnYes.focus()
   },
 
   scheduleAzusaFollowup() {
@@ -61,18 +400,298 @@ const PageTemplates = {
     }, 4000)
   },
 
+  _countHelpWords(text) {
+    const s = String(text || '')
+      .replace(/\s+/g, '')
+      .replace(/[、。,.!！?？「」『』（）()【】［］\\[\\]<>＜＞]/g, '')
+      .toLowerCase()
+    if (!s) return 0
+
+    // "助ける" 系ワードは部分一致で数える（重複は1回扱い）
+    const needles = [
+      'あずさ',
+      '助け',
+      'たすけ',
+      '救',
+      '解放',
+      '逃げろ',
+      '逃げて',
+      'にげろ',
+      'にげて',
+      '脱出',
+      '開放',
+      '救出',
+    ]
+    const hits = new Set()
+    for (const w of needles) {
+      if (w && s.includes(w)) hits.add(w)
+    }
+    return hits.size
+  },
+
+  scheduleFixedThreadAdminSpam(threadId) {
+    const id = Number(threadId)
+    if (!Number.isFinite(id)) return
+    if (GameState.fixed_thread_admin_spam_stopped || GameState.fixed_thread_help_triggered) {
+      return
+    }
+
+    GameState.startFixedThreadAdminSpam()
+
+    if (this._fixedThreadAdminTimerId) {
+      return
+    }
+
+    const messages = [
+      'なぜ入力できるんだ',
+      '閉じたはずだろ',
+      '誰が許可した',
+      'その名前は使えない',
+      '見えていないはずだ',
+      '繋がるはずがない',
+      'おかしい',
+      '戻れ',
+      '止まれ',
+      '……やめろ',
+      '誰だ',
+      'まだ残ってるのか',
+    ]
+    const maxAutoPosts = 200
+
+    this._fixedThreadAdminTimerId = setTimeout(() => {
+      this._fixedThreadAdminTimerId = null
+
+      if (GameState.fixed_thread_admin_spam_stopped || GameState.fixed_thread_help_triggered) {
+        return
+      }
+
+      // 固定スレは「閲覧中に反映」が見せ場なので、今そのスレを表示中のときだけ進める。
+      // Router.navigate は URL hash を更新しないため、hash ではなく現在表示中のスレIDで判定する。
+      if (Number(this._activeBbsThreadId) !== id) {
+        return
+      }
+
+      const thread = BBSThreads.getById(id)
+      if (!thread || !Array.isArray(thread.posts) || thread.posts.length < 1) {
+        this.scheduleFixedThreadAdminSpam(id)
+        return
+      }
+
+      const count = GameState.fixed_thread_admin_spam_count || 0
+      if (count >= maxAutoPosts) {
+        GameState.stopFixedThreadAdminSpam()
+        return
+      }
+
+      const msg = messages[count % messages.length]
+      BBSThreads.addPost(id, '管理人', msg)
+      GameState.incrementFixedThreadAdminSpamCount()
+      Router.navigate(`bbs/thread/${id}`)
+
+      this.scheduleFixedThreadAdminSpam(id)
+    }, 4000)
+  },
+
+  scheduleFixedThreadAzusaSeq(threadId) {
+    const id = Number(threadId)
+    if (!Number.isFinite(id)) return
+    if (!GameState.fixed_thread_help_triggered || GameState.fixed_thread_azusa_done) return
+
+    GameState.startFixedThreadAzusaSeq()
+
+    if (this._fixedThreadAzusaTimerId) return
+
+    const messages = [
+      '私のことはいいから。',
+      'もう見ないで。',
+      '早く逃げて。',
+      'お願い。',
+    ]
+
+    this._fixedThreadAzusaTimerId = setTimeout(() => {
+      this._fixedThreadAzusaTimerId = null
+
+      if (!GameState.fixed_thread_help_triggered || GameState.fixed_thread_azusa_done) {
+        return
+      }
+
+      const step = GameState.fixed_thread_azusa_step || 0
+      if (step >= messages.length) {
+        // ログアウト解放（ログアウト画面で20連ダイアログを出す）
+        GameState.completeFixedThreadAzusaSeqAndUnlockLogout()
+        GameState.unlockMaisterLogout()
+        return
+      }
+
+      const thread = BBSThreads.getById(id)
+      if (thread) {
+        BBSThreads.addPost(id, 'あずさ', messages[step])
+      }
+      GameState.advanceFixedThreadAzusaStep()
+
+      // 最後の投稿を入れた直後にログアウト解放
+      if ((GameState.fixed_thread_azusa_step || 0) >= messages.length) {
+        GameState.completeFixedThreadAzusaSeqAndUnlockLogout()
+        GameState.unlockMaisterLogout()
+        if (Number(this._activeBbsThreadId) === id) {
+          Router.navigate(`bbs/thread/${id}`)
+        }
+        return
+      }
+
+      if (Number(this._activeBbsThreadId) === id) {
+        Router.navigate(`bbs/thread/${id}`)
+      }
+
+      this.scheduleFixedThreadAzusaSeq(id)
+    }, 2000)
+  },
+
+  scheduleMaisterStory() {
+    if (!GameState.maister_story_started || GameState.site_erased) {
+      return
+    }
+    if (GameState.maister_story_complete || GameState.global_mojibake) {
+      return
+    }
+
+    // 画像8閲覧後、一定時間経過したら差し替え準備を整える（直後に起こさない）
+    if (
+      GameState.maister_image8_viewed &&
+      !GameState.maister_swap_ready &&
+      GameState.maister_swap_available_at > 0
+    ) {
+      const remaining = GameState.maister_swap_available_at - Date.now()
+      if (remaining <= 0) {
+        GameState.makeMaisterSwapReady()
+      } else if (!this._maisterSwapTimerId) {
+        this._maisterSwapTimerId = setTimeout(() => {
+          this._maisterSwapTimerId = null
+          GameState.makeMaisterSwapReady()
+          PageTemplates.scheduleMaisterStory()
+        }, remaining)
+      }
+    }
+
+    // 差し替え可能になったことを一度だけ通知（操作指示は出さない）
+    if (GameState.maister_swap_ready && !GameState.maister_swap_announced) {
+      const thread = BBSThreads.getById(997)
+      if (thread) {
+        BBSThreads.addPost(997, '管理人', '入れ替えました。')
+      }
+      GameState.markMaisterSwapAnnounced()
+      PageTemplates.winAlert('やっと来てくれた')
+      if (window.location.hash === '#/bbs/thread/997') {
+        Router.navigate('bbs/thread/997')
+      }
+    }
+
+    // ここから先はレス追加で進行（タイマー多重起動防止）
+    if (this._maister997TimerId) {
+      return
+    }
+
+    // 差し替えを目撃し、BBSへ戻った後は「閉鎖について」(998) 側へ進行する
+    if (GameState.maister_swap_done && GameState.maister_bbs_reentered_after_swap) {
+      const closingPosts = [
+        '閉鎖は“予定”じゃない。処理だ。',
+        '記録は残る。残す理由は、優しさじゃない。',
+        '戻るたび、足跡が増える。見たことは消えない。',
+        'うまく消えないのは、名前じゃなくて、時間だ。',
+        'とじるのは私。開けたのも私。',
+      ]
+      const closingAlerts = ['閉鎖処理', '記録', '足跡', '時間', '……']
+      const step = GameState.maister_closing_step || 0
+      if (step >= closingPosts.length) {
+        GameState.completeMaisterStoryAndCorruptAllText()
+        this.applyGlobalMojibake(document.getElementById('app') || document.body)
+        return
+      }
+
+      this._maister997TimerId = setTimeout(() => {
+        this._maister997TimerId = null
+        if (!GameState.maister_story_started || GameState.site_erased) return
+        if (GameState.maister_story_complete || GameState.global_mojibake) return
+        if (!GameState.maister_swap_done) return
+
+        const idx = GameState.maister_closing_step || 0
+        if (idx >= closingPosts.length) {
+          GameState.completeMaisterStoryAndCorruptAllText()
+          this.applyGlobalMojibake(document.getElementById('app') || document.body)
+          return
+        }
+
+        const thread = BBSThreads.getById(998)
+        if (thread) {
+          BBSThreads.addPost(998, '管理人', closingPosts[idx])
+        }
+        PageTemplates.winAlert(closingAlerts[idx] || '……')
+        GameState.advanceMaisterClosingStep()
+
+        if (window.location.hash === '#/bbs/thread/998') {
+          Router.navigate('bbs/thread/998')
+        }
+
+        if ((GameState.maister_closing_step || 0) >= closingPosts.length) {
+          GameState.completeMaisterStoryAndCorruptAllText()
+          this.applyGlobalMojibake(document.getElementById('app') || document.body)
+          return
+        }
+        PageTemplates.scheduleMaisterStory()
+      }, 4000)
+      return
+    }
+
+    // 差し替え後、BBSへ戻るまでは進行を止める
+    if (GameState.maister_swap_done && !GameState.maister_bbs_reentered_after_swap) {
+      return
+    }
+
+    // 起動直後の波（固定数だけ）
+    const prePosts = ['起動しました。', '欠けています。', '見ている間は消えません。', 'まだ揃っていない。']
+    const preAlerts = ['……', '足りない', '記録する', 'まだ']
+    const step = GameState.maister_pre_step || 0
+    if (step >= prePosts.length) {
+      return
+    }
+
+    this._maister997TimerId = setTimeout(() => {
+      this._maister997TimerId = null
+      if (!GameState.maister_story_started || GameState.site_erased) return
+      if (GameState.maister_story_complete || GameState.global_mojibake) return
+      if (GameState.maister_swap_done) return
+
+      const idx = GameState.maister_pre_step || 0
+      if (idx >= prePosts.length) return
+
+      const thread = BBSThreads.getById(997)
+      if (thread) {
+        BBSThreads.addPost(997, '管理人', prePosts[idx])
+      }
+      PageTemplates.winAlert(preAlerts[idx] || '……')
+      GameState.advanceMaisterPreStep()
+
+      if (window.location.hash === '#/bbs/thread/997') {
+        Router.navigate('bbs/thread/997')
+      }
+
+      PageTemplates.scheduleMaisterStory()
+    }, 4000)
+  },
+
   /**
    * ホームページ
    */
-  home: {
-    path: '#/',
-    requiresAuth: false,
-    render() {
-      // 「最新の日記」は常に公開のみ表示
-      const recentDiary = DiaryEntries.getAll(true).slice(0, 5)
-      const recentThreads = BBSThreads.getAll()
-        .filter(t => GameState.grim_to_admin_entered || t.id !== 999)
-        .slice(0, 3)
+	  home: {
+	    path: '#/',
+	    requiresAuth: false,
+	    render() {
+	      const FIXED_THREAD_TITLE = '縺ゅ★縺輔ｒ髢区叛縺励ｍ��'
+	      // 「最新の日記」は常に公開のみ表示
+	      const recentDiary = DiaryEntries.getAll(true).slice(0, 5)
+	      const recentThreads = BBSThreads.getAll()
+	        .filter(t => GameState.grim_to_admin_entered || t.id !== 999)
+	        .slice(0, 3)
 
       let diaryHtml = recentDiary
         .map(
@@ -83,23 +702,26 @@ const PageTemplates = {
         )
         .join('')
 
-      let threadsHtml = recentThreads
-        .map(
-          t => `<div class="thread-item">
-          <span class="thread-id">[${t.id}]</span>
-          <a href="#/bbs/thread/${t.id}">${t.title}</a>
-          <span class="thread-posts">(${t.posts.length})</span>
-        </div>`
-        )
-        .join('')
+	      let threadsHtml = recentThreads
+	        .map(
+	          t => {
+	            const noCorruptAttr = t.title === FIXED_THREAD_TITLE ? ' data-no-corrupt="1"' : ''
+	            return `<div class="thread-item"${noCorruptAttr}>
+	          <span class="thread-id">[${t.id}]</span>
+	          <a href="#/bbs/thread/${t.id}">${t.title}</a>
+	          <span class="thread-posts">(${t.posts.length})</span>
+	        </div>`
+	          }
+	        )
+	        .join('')
 
-      return `
-        <div class="page home">
-          <h1>ようこそ</h1>
-          <p>ここは何かの痕跡です。</p>
-          <hr />
-          
-          <h2>【 最新の日記 】</h2>
+		      return `
+		        <div class="page home">
+	          <h1>ようこそ</h1>
+	          <p class="home-closed" data-no-corrupt="1">※このサイトは閉鎖されました。</p>
+	          <hr />
+	          
+	          <h2>【 最新の日記 】</h2>
           <div class="recent-list">
             ${diaryHtml}
           </div>
@@ -126,59 +748,126 @@ const PageTemplates = {
   /**
    * 掲示板スレッド一覧
    */
-  bbs: {
-    path: '#/bbs',
-    requiresAuth: false,
-    render() {
-      const threads = BBSThreads.getAll().filter(t => GameState.grim_to_admin_entered || t.id !== 999)
-      const threadHtml = threads
-        .map(
-          t => `
-        <div class="thread-row">
-          <span class="thread-id">[${String(t.id).padStart(3, '0')}]</span>
-          <a href="#/bbs/thread/${t.id}" class="thread-title">${t.title}</a>
-          <span class="thread-count">(${t.posts.length})</span>
-          <span class="thread-date">${t.createdAt}</span>
-        </div>
-      `
-        )
-        .join('')
+	  bbs: {
+	    path: '#/bbs',
+		    requiresAuth: false,
+		    render() {
+		      const FIXED_THREAD_TITLE = '縺ゅ★縺輔ｒ髢区叛縺励ｍ��'
+		      const threads = BBSThreads.getAll().filter(t => GameState.grim_to_admin_entered || t.id !== 999)
+	      const threadHtml = threads
+	        .map(
+	          t => {
+	            const noCorruptAttr = t.title === FIXED_THREAD_TITLE ? ' data-no-corrupt="1"' : ''
+	            return `
+	        <div class="thread-row"${noCorruptAttr}>
+	          <span class="thread-id">[${String(t.id).padStart(3, '0')}]</span>
+	          <a href="#/bbs/thread/${t.id}" class="thread-title">${t.title}</a>
+	          <span class="thread-count">(${t.posts.length})</span>
+	          <span class="thread-date">${t.createdAt}</span>
+	        </div>
+	      `
+	          }
+	        )
+	        .join('')
 
-        return `
-        <div class="page bbs">
-          <h1>BBS</h1>
-          <p>スレッド一覧</p>
-          <hr />
+	      const canCreateThread =
+	        GameState.bbs_thread_create_unlocked && GameState.session_auth && !GameState.site_erased
+	      const createDisabled = GameState.bbs_fixed_thread_created ? 'disabled' : ''
+	      const createHtml = canCreateThread
+	        ? `
+	          <hr />
+	          <h2>【 新規スレッド 】</h2>
+	          <form id="newThreadForm">
+	            <label for="newThreadTitle">件名：</label>
+	            <input id="newThreadTitle" type="text" placeholder="任意" />
+	            <button id="newThreadSubmit" type="submit" ${createDisabled}>作成</button>
+	          </form>
+	        `
+	        : ''
+
+	        return `
+	        <div class="page bbs">
+	          <h1>BBS</h1>
+	          <p>スレッド一覧</p>
+	          <hr />
           
-          <div class="thread-list">
-            ${threadHtml}
-          </div>
+	          <div class="thread-list">
+	            ${threadHtml}
+	          </div>
 
-          <hr />
-          <p class="sub">
-            <small>page: BBS | auth: ${GameState.session_auth} | stage: ${GameState.progress_stage}</small>
-          </p>
-        </div>
-      `
-    },
-    onMount() {
-      // no-op
+	          ${GameState.bbs_fixed_thread_created ? '' : createHtml}
+
+	          <hr />
+	          <p class="sub">
+	            <small>page: BBS | auth: ${GameState.session_auth} | stage: ${GameState.progress_stage}</small>
+	          </p>
+	        </div>
+	      `
+	    },
+	    onMount() {
+	      const form = document.getElementById('newThreadForm')
+	      const input = document.getElementById('newThreadTitle')
+	      const submit = document.getElementById('newThreadSubmit')
+	      const FIXED_TITLE = '縺ゅ★縺輔ｒ髢区叛縺励ｍ��'
+
+		      // 既に存在する場合は「作成済み」扱いに寄せる（ゲーム状態だけが消えたケース対策）
+		      try {
+		        const found = BBSThreads.getAll().find((t) => t && t.title === FIXED_TITLE)
+		        if (found) {
+		          if (!GameState.bbs_fixed_thread_created) {
+		            GameState.markBbsFixedThreadCreated()
+		          }
+		          GameState.setBbsFixedThreadId(found.id)
+		        }
+		      } catch (e) {
+		        // ignore
+		      }
+
+		      if (form && input && submit) {
+		        form.addEventListener('submit', (e) => {
+		          e.preventDefault()
+		          if (GameState.bbs_fixed_thread_created) return
+
+		          // 任意入力だが、作成されるスレッド名は固定
+		          const newId = BBSThreads.createThread(FIXED_TITLE)
+		          // 1つ目の投稿も固定文
+		          BBSThreads.addPost(newId, 'ぐりむ', FIXED_TITLE)
+		          GameState.markBbsFixedThreadCreated()
+		          GameState.setBbsFixedThreadId(newId)
+		          // URL hash も更新して「現在どのスレを見ているか」を他演出と一致させる
+		          window.location.hash = `#/bbs/thread/${newId}`
+		        })
+		      }
+
+	      if (
+	        GameState.maister_story_started &&
+	        GameState.maister_swap_done &&
+	        !GameState.maister_bbs_reentered_after_swap
+      ) {
+        GameState.markMaisterBbsReenteredAfterSwap()
+      }
     },
   },
 
   /**
    * BBSスレッド個別ページ
    */
-  'bbs-thread': {
-    path: '#/bbs/thread/:id',
-    requiresAuth: false,
-    render(params) {
-      const threadId = parseInt(params.id)
-      let thread = BBSThreads.getById(threadId)
+		  'bbs-thread': {
+	    path: '#/bbs/thread/:id',
+	    requiresAuth: false,
+		    render(params) {
+		      const threadId = parseInt(params.id)
+		      let thread = BBSThreads.getById(threadId)
+		      const FIXED_THREAD_TITLE = '縺ゅ★縺輔ｒ髢区叛縺励ｍ��'
+		      const isFixedThread = !!(
+		        thread &&
+		        (thread.title === FIXED_THREAD_TITLE || (GameState.bbs_fixed_thread_id || 0) === threadId)
+		      )
+		      const displayThreadTitle = isFixedThread ? 'あずさを開放しろ！' : (thread ? thread.title : '')
 
-      if (!thread || (!GameState.grim_to_admin_entered && threadId === 999)) {
-        return '<div class="page"><h1>スレッドが見つかりません</h1></div>'
-      }
+		      if (!thread || (!GameState.grim_to_admin_entered && threadId === 999)) {
+		        return '<div class="page"><h1>スレッドが見つかりません</h1></div>'
+		      }
 
       // 999スレは1234到達時に最終投稿を描画前に確実反映する
       if (threadId === 999 && (AccessCounter.get() === 1234 || GameState.counter_1234_reached)) {
@@ -223,20 +912,21 @@ const PageTemplates = {
         })
       }
 
-      const postsHtml = displayPosts
-        .map(
-          (p) => `
-        <div class="post">
-          <div class="post-header">
-            <span class="post-no">【 ${p.id} 】</span>
-            <span class="post-name">${p.name}</span>
-            <span class="post-date">${p.date}</span>
-          </div>
-          <div class="post-content">${p.content}</div>
-        </div>
-      `
-        )
-        .join('')
+	      const postsNoCorruptAttr = isFixedThread ? ' data-no-corrupt="1"' : ''
+	      const postsHtml = displayPosts
+	        .map(
+	          (p) => `
+	        <div class="post"${postsNoCorruptAttr}>
+	          <div class="post-header">
+	            <span class="post-no">【 ${p.id} 】</span>
+	            <span class="post-name">${p.name}</span>
+	            <span class="post-date">${p.date}</span>
+	          </div>
+	          <div class="post-content">${p.content}</div>
+	        </div>
+	      `
+	        )
+	        .join('')
 
       // 犯人捜しスレ（id: 997）は、管理人ログイン + 日記「謎」閲覧で投稿解放
       // ただし「ぐりむ / グリム」入力後は再度閉鎖
@@ -247,27 +937,30 @@ const PageTemplates = {
         !GameState.grim_keyword_entered &&
         !GameState.bbs_reply_consumed
 
-      // [999] は「ぐりむ→管理者/管理人」後に 993 を閲覧したら投稿解放
-      const canPostTo999 =
-        GameState.session_auth &&
-        threadId === 999 &&
-        GameState.grim_to_admin_entered &&
-        GameState.kiriban_993_viewed
+	      // [999] は「ぐりむ→管理者/管理人」後に 993 を閲覧したら投稿解放
+	      const canPostTo999 =
+	        GameState.session_auth &&
+	        threadId === 999 &&
+	        GameState.grim_to_admin_entered &&
+	        GameState.kiriban_993_viewed
 
-      const canPostToThread = canPostTo997 || canPostTo999
+	      const canPostToFixedThread =
+	        GameState.session_auth && thread && thread.title === FIXED_THREAD_TITLE
+
+	      const canPostToThread = canPostTo997 || canPostTo999 || canPostToFixedThread
 
       // 既定では全スレッド閉鎖表示
       let closedNoticeHtml = `
         <p class="thread-closed-notice">このスレッドは閉じられました。投稿はできません。</p>
       `
-      if (canPostToThread) {
-        closedNoticeHtml = ''
-      }
+	      if (canPostToThread) {
+	        closedNoticeHtml = ''
+	      }
 
       // 条件達成時のみ投稿フォームを表示
       let postFormHtml = ''
-      if (canPostToThread) {
-        if (threadId === 999) {
+	      if (canPostToThread) {
+	        if (threadId === 999) {
           postFormHtml = `
             <hr />
             <h2>【 レス投稿 】</h2>
@@ -279,32 +972,46 @@ const PageTemplates = {
               <button type="submit">　送信　</button>
             </form>
           `
-        } else {
-          postFormHtml = `
-            <hr />
-            <h2>【 レス投稿 】</h2>
-            <form id="postForm">
-              <label for="postName">名前：</label>
-              <input id="postName" type="text" value="名無し" />
-              <label for="postContent">本文：</label>
-              <textarea id="postContent" placeholder="レスを入力" rows="4"></textarea>
-              <button type="submit">　送信　</button>
-            </form>
-          `
-        }
-      }
+	        } else {
+	          if (thread.title === FIXED_THREAD_TITLE) {
+	            postFormHtml = `
+	              <hr />
+	              <h2>【 レス投稿 】</h2>
+	              <form id="postForm">
+	                <label for="postName">名前：</label>
+	                <input id="postName" type="text" value="ぐりむ" readonly />
+	                <label for="postContent">本文：</label>
+	                <textarea id="postContent" placeholder="レスを入力" rows="4"></textarea>
+	                <button type="submit">　送信　</button>
+	              </form>
+	            `
+	          } else {
+	          postFormHtml = `
+	            <hr />
+	            <h2>【 レス投稿 】</h2>
+	            <form id="postForm">
+	              <label for="postName">名前：</label>
+	              <input id="postName" type="text" value="名無し" />
+	              <label for="postContent">本文：</label>
+	              <textarea id="postContent" placeholder="レスを入力" rows="4"></textarea>
+	              <button type="submit">　送信　</button>
+	            </form>
+	          `
+	          }
+	        }
+	      }
 
-      return `
-        <div class="page bbs-thread">
-          <h1>[${threadId}] ${thread.title}</h1>
-          <hr />
-          
-          <div class="posts">
-            ${postsHtml}
-          </div>
+	      return `
+	        <div class="page bbs-thread">
+	          <h1${isFixedThread ? ' data-no-corrupt="1"' : ''}>[${threadId}] ${displayThreadTitle}</h1>
+	          <hr />
+	          
+	          <div class="posts"${isFixedThread ? ' data-no-corrupt="1"' : ''}>
+	            ${postsHtml}
+	          </div>
 
-          ${closedNoticeHtml}
-          ${postFormHtml}
+	          ${closedNoticeHtml}
+	          ${postFormHtml}
 
           <hr />
           <p class="sub">
@@ -313,14 +1020,25 @@ const PageTemplates = {
         </div>
       `
     },
-    onMount(params) {
-      const threadId = parseInt(params.id)
-      const finalAdminComment = '私の名前なんて知らないくせに'
+		    onMount(params) {
+		      const threadId = parseInt(params.id)
+		      const FIXED_THREAD_TITLE = '縺ゅ★縺輔ｒ髢区叛縺励ｍ��'
+		      const finalAdminComment = '私の名前なんて知らないくせに'
+		      const currentThread = BBSThreads.getById(threadId)
+		      const isFixedThread =
+		        GameState.session_auth &&
+		        currentThread &&
+		        (currentThread.title === FIXED_THREAD_TITLE || (GameState.bbs_fixed_thread_id || 0) === threadId)
 
-      // 999スレで1234到達時、最終文言を必ず1回反映
-      if (threadId === 999 && (AccessCounter.get() === 1234 || GameState.counter_1234_reached)) {
-        const thread = BBSThreads.getById(999)
-        if (thread) {
+		      if (isFixedThread) {
+		        PageTemplates.scheduleFixedThreadAdminSpam(threadId)
+		        PageTemplates.scheduleFixedThreadAzusaSeq(threadId)
+		      }
+
+	      // 999スレで1234到達時、最終文言を必ず1回反映
+	      if (threadId === 999 && (AccessCounter.get() === 1234 || GameState.counter_1234_reached)) {
+	        const thread = BBSThreads.getById(999)
+	        if (thread) {
           if (AccessCounter.get() === 1234) {
             GameState.markCounter1234Reached()
           }
@@ -357,6 +1075,15 @@ const PageTemplates = {
 
       if (threadId === 999) {
         PageTemplates.scheduleAzusaFollowup()
+      }
+
+      // うらなみルート: 8->9目撃後にBBSへ戻ったことを記録
+      if (
+        GameState.maister_story_started &&
+        GameState.maister_swap_done &&
+        !GameState.maister_bbs_reentered_after_swap
+      ) {
+        GameState.markMaisterBbsReenteredAfterSwap()
       }
 
       if (threadId === 999 && canPostTo999) {
@@ -448,66 +1175,164 @@ const PageTemplates = {
         }
       }
 
-      // 条件達成時のみ投稿機能を有効化
-      if (canPostToThread) {
-        const form = document.getElementById('postForm')
-        if (form) {
-          form.addEventListener('submit', (e) => {
-            e.preventDefault()
+	      // 投稿フォームが存在する場合のみ送信処理を有効化（render条件とズレても壊れないようにする）
+	      const form = document.getElementById('postForm')
+		      if (form) {
+		        const nameInput = document.getElementById('postName')
+		        const contentInput = document.getElementById('postContent')
+		        const submitBtn = form.querySelector('button[type="submit"]')
 
-            const name = document.getElementById('postName').value.trim()
-            const content = document.getElementById('postContent').value.trim()
-            const normalized = content.replace(/[、。\s]/g, '')
+		        // 固定スレは再描画頻度が高いので、下書きを sessionStorage に保持して復元する
+		        if (isFixedThread && contentInput) {
+		          const draft = GameState.fixed_thread_draft || ''
+		          if (typeof contentInput.value === 'string' && contentInput.value !== draft) {
+		            contentInput.value = draft
+		          }
+		          const onDraft = () => {
+		            GameState.setFixedThreadDraft(contentInput.value || '')
+		          }
+		          contentInput.addEventListener('input', onDraft)
+		          contentInput.addEventListener('change', onDraft)
+		        }
 
-            if (threadId === 999) {
-              if (AccessCounter.get() !== 1234 && !GameState.counter_1234_reached) {
-                return
+	        // #997 投稿は「3パターン」以外の送信をUI側でも封じる
+        const isAllowed997 = () => {
+          const name = String(nameInput ? nameInput.value : '').trim()
+          const content = String(contentInput ? contentInput.value : '').trim()
+          const normalized = PageTemplates._normalizeBbsToken(content)
+          return (
+            (name === 'ぐりむ' && normalized === '管理人') ||
+            (name === '管理人' && normalized === 'ぐりむ') ||
+            (name === 'ぐりむ' && normalized === 'うらなみ')
+          )
+        }
+
+	        const updateSubmitDisabled = () => {
+	          if (!submitBtn) return
+	          if (threadId === 999 || isFixedThread) {
+	            submitBtn.disabled = false
+	            return
+	          }
+	          submitBtn.disabled = threadId === 997 ? !isAllowed997() : true
+	        }
+
+	        if (threadId !== 999 && !isFixedThread) {
+	          updateSubmitDisabled()
+	          if (nameInput) {
+	            nameInput.addEventListener('input', updateSubmitDisabled)
+	            nameInput.addEventListener('change', updateSubmitDisabled)
+            nameInput.addEventListener('keydown', (e) => {
+              if (e.key === 'Enter' && submitBtn && submitBtn.disabled) {
+                e.preventDefault()
               }
-              if (content === 'あずさ') {
-                BBSThreads.addPost(threadId, 'ぐりむ', content)
-                GameState.startAzusaFollowup()
-                PageTemplates.scheduleAzusaFollowup()
-                Router.navigate(`bbs/thread/${threadId}`)
-              }
-              return
+            })
+          }
+          if (contentInput) {
+            contentInput.addEventListener('input', updateSubmitDisabled)
+            contentInput.addEventListener('change', updateSubmitDisabled)
+	          }
+	        }
+
+	        form.addEventListener('submit', (e) => {
+	          e.preventDefault()
+
+          const name = document.getElementById('postName').value.trim()
+          const content = document.getElementById('postContent').value.trim()
+          const normalized = PageTemplates._normalizeBbsToken(content)
+
+		          if (isFixedThread) {
+		            if (!content) return
+		            BBSThreads.addPost(threadId, 'ぐりむ', content)
+		            GameState.clearFixedThreadDraft()
+		            // 「助ける系ワードが2つ以上」なら管理人の自動投稿を停止し、あずさの連投へ
+		            if (PageTemplates._countHelpWords(content) >= 2) {
+		              if (!GameState.fixed_thread_help_triggered) {
+		                GameState.markFixedThreadHelpTriggered()
+		              }
+		              GameState.stopFixedThreadAdminSpam()
+		              if (PageTemplates._fixedThreadAdminTimerId) {
+		                clearTimeout(PageTemplates._fixedThreadAdminTimerId)
+		                PageTemplates._fixedThreadAdminTimerId = null
+		              }
+		              PageTemplates.scheduleFixedThreadAzusaSeq(threadId)
+		            }
+		            Router.navigate(`bbs/thread/${threadId}`)
+		            return
+		          }
+
+	          if (threadId === 999) {
+	            if (AccessCounter.get() !== 1234 && !GameState.counter_1234_reached) {
+	              return
+	            }
+	            if (content === 'あずさ') {
+              BBSThreads.addPost(threadId, 'ぐりむ', content)
+              GameState.startAzusaFollowup()
+              PageTemplates.scheduleAzusaFollowup()
+              Router.navigate(`bbs/thread/${threadId}`)
             }
+            return
+          }
 
-            const isPattern1 = name === '管理人' && normalized === 'ぐりむ'
-            const isPattern2 = name === 'ぐりむ' && (normalized === '管理者' || normalized === '管理人')
-            const isPattern3 = name === 'ぐりむ' && normalized === 'まいすたー'
+          const isPattern1 = name === '管理人' && normalized === 'ぐりむ'
+          const isPattern2 = name === 'ぐりむ' && normalized === '管理人'
+          const isPattern3 = name === 'ぐりむ' && normalized === 'うらなみ'
 
-            // 入力内容に関係なく、送信操作時点で次レス不可にする
-            GameState.markBbsReplyConsumed()
+	          // 指定の3パターン以外は送信不可（ボタンも無効化するが、念のためsubmitでも弾く）
+	          if (!(isPattern1 || isPattern2 || isPattern3)) {
+	            return
+	          }
 
-            if (!(isPattern1 || isPattern2 || isPattern3)) {
+          // 送信が成立した時点で次レス不可にする
+          GameState.markBbsReplyConsumed()
+
+          if (content) {
+            if (isPattern1) {
+              BBSThreads.addPost(threadId, name, content)
+              GameState.markGrimKeywordEntered()
               Router.navigate(`bbs/thread/${threadId}`)
               return
             }
 
-            if (content) {
-              if (isPattern1) {
-                BBSThreads.addPost(threadId, name, content)
-                GameState.markGrimKeywordEntered()
-                Router.navigate(`bbs/thread/${threadId}`)
-                return
-              }
-
-              if (isPattern2) {
-                BBSThreads.addPost(threadId, name, content)
-                GameState.markGrimToAdminEntered()
-                Router.navigate(`bbs/thread/${threadId}`)
-                return
-              }
-
-              if (isPattern3) {
-                BBSThreads.addPost(threadId, name, content)
-                GameState.markGrimToXxxEntered()
-                Router.navigate(`bbs/thread/${threadId}`)
-                return
-              }
+            if (isPattern2) {
+              BBSThreads.addPost(threadId, name, content)
+              GameState.markGrimToAdminEntered()
+              Router.navigate(`bbs/thread/${threadId}`)
+              return
             }
-          })
-        }
+
+            if (isPattern3) {
+              BBSThreads.addPost(threadId, name, content)
+              GameState.markGrimToXxxEntered()
+              if (threadId === 997) {
+                GameState.startMaisterStory()
+                if (typeof GameState.setEndingCode === 'function') {
+                  GameState.setEndingCode('ED-3')
+                }
+
+                // 起動の“反応”を即時に反映（何も起きていないように見えるのを防ぐ）
+                if (!GameState.maister_start_alerted) {
+                  GameState.markMaisterStartAlerted()
+                  BBSThreads.addPost(997, '管理人', '起動しました。')
+                  GameState.advanceMaisterPreStep()
+                }
+
+	                const alerts = [
+	                  '……聞こえた',
+	                  '合図だけで十分',
+	                  'うらなみ',
+	                  '遅い',
+	                  '犯人は、名前じゃない',
+	                  '消せないのは仕様',
+	                  '観測を始める',
+	                ]
+	                alerts.forEach((m) => PageTemplates.winAlert(m))
+	                PageTemplates.scheduleMaisterStory()
+	              }
+              Router.navigate(`bbs/thread/${threadId}`)
+              return
+            }
+          }
+        })
       }
     },
   },
@@ -515,22 +1340,26 @@ const PageTemplates = {
   /**
    * 過去ログ
    */
-  'bbs-logs': {
-    path: '#/bbs/logs',
-    requiresAuth: false,
-    render() {
-      const threads = BBSThreads.getAll().filter(t => GameState.grim_to_admin_entered || t.id !== 999)
-      const threadHtml = threads
-        .map(
-          t => `
-        <div class="thread-row">
-          <span class="thread-id">[${String(t.id).padStart(3, '0')}]</span>
-          <a href="#/bbs/thread/${t.id}" class="thread-title">${t.title}</a>
-          <span class="thread-count">(${t.posts.length})</span>
-        </div>
-      `
-        )
-        .join('')
+		  'bbs-logs': {
+	    path: '#/bbs/logs',
+	    requiresAuth: false,
+	    render() {
+	      const FIXED_THREAD_TITLE = '縺ゅ★縺輔ｒ髢区叛縺励ｍ��'
+	      const threads = BBSThreads.getAll().filter(t => GameState.grim_to_admin_entered || t.id !== 999)
+	      const threadHtml = threads
+	        .map(
+	          t => {
+	            const noCorruptAttr = t.title === FIXED_THREAD_TITLE ? ' data-no-corrupt="1"' : ''
+	            return `
+	        <div class="thread-row"${noCorruptAttr}>
+	          <span class="thread-id">[${String(t.id).padStart(3, '0')}]</span>
+	          <a href="#/bbs/thread/${t.id}" class="thread-title">${t.title}</a>
+	          <span class="thread-count">(${t.posts.length})</span>
+	        </div>
+	      `
+	          }
+	        )
+	        .join('')
 
       return `
         <div class="page bbs-logs">
@@ -593,24 +1422,40 @@ const PageTemplates = {
   /**
    * 日記一覧（アーカイブ付き）
    */
-  diary: {
-    path: '#/diary',
-    requiresAuth: false,
-    render() {
-      // 認証状態に応じて、公開のみ表示
-      const isAuth = GameState.session_auth
-      const shouldCorrupt = PageTemplates.hasAnyTriggerFlag()
-      const recentDiary = DiaryEntries.getAll(!isAuth)
-      const diaryHtml = recentDiary
-        .map(
-          d => {
+	  diary: {
+	    path: '#/diary',
+	    requiresAuth: false,
+	    render() {
+	      // 認証状態に応じて、公開のみ表示
+	      const isAuth = GameState.session_auth
+	      const shouldCorrupt = PageTemplates.hasAnyTriggerFlag()
+	      const SPECIAL_PRIVATE_DATE = '2008-03-02'
+	      const blockedSpecialByPatterns = GameState.grim_keyword_entered || GameState.grim_to_admin_entered
+	      const canSeeSpecialPrivate =
+	        isAuth && GameState.maister_story_started && GameState.global_mojibake && !blockedSpecialByPatterns
+	      const recentDiary = DiaryEntries.getAll(!isAuth).filter((d) => {
+	        if (!d) return false
+	        // 「最後の文字化けしない日記」は最初は見えない（ログイン中でも隠す）
+	        if (d.date === SPECIAL_PRIVATE_DATE && d.noCorrupt && !d.isPublic) {
+	          return canSeeSpecialPrivate
+	        }
+	        return true
+	      })
+	      const diaryHtml = recentDiary
+	        .map(
+	          d => {
+            const noCorruptAttr = d.noCorrupt ? ' data-no-corrupt="1"' : ''
             const displayTitle =
-              shouldCorrupt && d.content.includes('早くみつけて') ? PageTemplates.toMojibake() : d.title
+              d.noCorrupt
+                ? d.title
+                : shouldCorrupt && d.content.includes('早くみつけて')
+                  ? PageTemplates.toMojibake()
+                  : d.title
             return `<div class="diary-entry">
-          <span class="diary-date">${d.date}</span>
-          <a href="#/diary/${d.date}" class="diary-title">${displayTitle}</a>
-          ${isAuth ? (d.isPublic ? '<span class="public-badge">公開</span>' : '<span class="private-badge">非公開</span>') : ''}
-        </div>`
+	          <span class="diary-date">${d.date}</span>
+	          <a href="#/diary/${d.date}" class="diary-title"${noCorruptAttr}>${displayTitle}</a>
+	          ${isAuth ? (d.isPublic ? '<span class="public-badge">公開</span>' : '<span class="private-badge">非公開</span>') : ''}
+	        </div>`
           }
         )
         .join('')
@@ -640,29 +1485,52 @@ const PageTemplates = {
   /**
    * 日記個別ページ
    */
-  'diary-detail': {
-    path: '#/diary/:date',
-    requiresAuth: false,
-    render(params) {
-      const date = params.date
-      const entry = DiaryEntries.getByDate(date)
-      const isAuth = GameState.session_auth
-      const shouldCorrupt = PageTemplates.hasAnyTriggerFlag()
+		  'diary-detail': {
+	    path: '#/diary/:date',
+	    requiresAuth: false,
+	    render(params) {
+	      const date = params.date
+	      const entry = DiaryEntries.getByDate(date)
+	      const isAuth = GameState.session_auth
+	      const shouldCorrupt = PageTemplates.hasAnyTriggerFlag()
+	      const SPECIAL_PRIVATE_DATE = '2008-03-02'
+	      const blockedSpecialByPatterns = GameState.grim_keyword_entered || GameState.grim_to_admin_entered
+	      const canSeeSpecialPrivate =
+	        isAuth && GameState.maister_story_started && GameState.global_mojibake && !blockedSpecialByPatterns
 
-      if (!entry) {
-        return '<div class="page"><h1>日記が見つかりません</h1></div>'
-      }
+	      if (!entry) {
+	        return '<div class="page"><h1>日記が見つかりません</h1></div>'
+	      }
 
-      // 非認証時に非公開日記へのアクセスを制限
-      if (!isAuth && !entry.isPublic) {
-        return '<div class="page"><h1>この日記はプライベートです。アクセスできません。</h1></div>'
-      }
+	      // ログイン中でも、特定の非公開(文字化けしない)日記は最初は見えない
+	      if (
+	        isAuth &&
+	        entry.date === SPECIAL_PRIVATE_DATE &&
+	        entry.noCorrupt &&
+	        !entry.isPublic &&
+	        !canSeeSpecialPrivate
+	      ) {
+	        return '<div class="page"><h1>この日記はプライベートです。アクセスできません。</h1></div>'
+	      }
 
-      // 認証状態に応じてフィルタリング
-      const allEntries = DiaryEntries.getAll(!isAuth)
-      const currentIdx = allEntries.findIndex(e => e.date === date)
-      const prevEntry = currentIdx + 1 < allEntries.length ? allEntries[currentIdx + 1] : null
-      const nextEntry = currentIdx > 0 ? allEntries[currentIdx - 1] : null
+	      // 非認証時に非公開日記へのアクセスを制限
+	      if (!isAuth && !entry.isPublic) {
+	        return '<div class="page"><h1>この日記はプライベートです。アクセスできません。</h1></div>'
+	      }
+
+	      // 認証状態に応じてフィルタリング
+	      const allEntries = DiaryEntries.getAll(!isAuth).filter((d) => {
+	        if (!d) return false
+	        if (isAuth && !canSeeSpecialPrivate) {
+	          if (d.date === SPECIAL_PRIVATE_DATE && d.noCorrupt && !d.isPublic) {
+	            return false
+	          }
+	        }
+	        return true
+	      })
+	      const currentIdx = allEntries.findIndex(e => e.date === date)
+	      const prevEntry = currentIdx + 1 < allEntries.length ? allEntries[currentIdx + 1] : null
+	      const nextEntry = currentIdx > 0 ? allEntries[currentIdx - 1] : null
 
       let navHtml = '<div class="diary-nav">'
       if (prevEntry) {
@@ -675,18 +1543,27 @@ const PageTemplates = {
       navHtml += '</div>'
 
       const displayTitle =
-        shouldCorrupt && entry.content.includes('早くみつけて') ? PageTemplates.toMojibake() : entry.title
+        entry.noCorrupt
+          ? entry.title
+          : shouldCorrupt && entry.content.includes('早くみつけて')
+            ? PageTemplates.toMojibake()
+            : entry.title
       const displayContent =
-        shouldCorrupt && entry.content.includes('早くみつけて') ? PageTemplates.toMojibake() : entry.content
+        entry.noCorrupt
+          ? entry.content
+          : shouldCorrupt && entry.content.includes('早くみつけて')
+            ? PageTemplates.toMojibake()
+            : entry.content
+      const noCorruptAttr = entry.noCorrupt ? ' data-no-corrupt="1"' : ''
 
       return `
         <div class="page diary-detail">
           <h1>${date}</h1>
-          <h2>${displayTitle}</h2>
+          <h2${noCorruptAttr}>${displayTitle}</h2>
           ${!entry.isPublic ? '<span class="private-badge">🔒 プライベート</span>' : '<span class="public-badge">🔓 公開</span>'}
           <hr />
           
-          <div class="diary-content">${displayContent.replace(/\n/g, '<br>')}</div>
+          <div class="diary-content"${noCorruptAttr}>${displayContent.replace(/\n/g, '<br>')}</div>
 
           <hr />
           ${navHtml}
@@ -698,14 +1575,28 @@ const PageTemplates = {
         </div>
       `
     },
-    onMount(params) {
-      const entry = DiaryEntries.getByDate(params.date)
-      if (entry && entry.content.includes('早くみつけて') && GameState.session_auth) {
-        GameState.markMysteryDiaryViewed()
-      }
-      AccessCounter.increment()
-    },
-  },
+			    onMount(params) {
+			      const entry = DiaryEntries.getByDate(params.date)
+			      const SPECIAL_PRIVATE_DATE = '2008-03-02'
+			      const blockedSpecialByPatterns = GameState.grim_keyword_entered || GameState.grim_to_admin_entered
+			      const allowedSpecial =
+			        GameState.session_auth &&
+			        entry &&
+			        entry.date === SPECIAL_PRIVATE_DATE &&
+			        entry.noCorrupt &&
+			        !entry.isPublic &&
+			        GameState.maister_story_started &&
+			        GameState.global_mojibake &&
+			        !blockedSpecialByPatterns
+			      if (allowedSpecial) {
+			        GameState.unlockBbsThreadCreate()
+			      }
+			      if (entry && entry.content.includes('早くみつけて') && GameState.session_auth) {
+			        GameState.markMysteryDiaryViewed()
+			      }
+			      AccessCounter.increment()
+		    },
+		  },
 
   /**
    * 倉庫
@@ -726,7 +1617,20 @@ const PageTemplates = {
         { title: '縺ｿ縺､縺代◆', image: 'images/image09.png', id: 9 },
       ]
 
-      const visibleItems = items.filter(item => {
+      // うらなみルート: 画像8を後から画像9へ差し替える（直後ではない）
+      const shouldSwapSlot8 = GameState.maister_swap_ready || GameState.maister_swap_done
+      const adjustedItems = items.map((item) => {
+        if (item.id === 8 && shouldSwapSlot8) {
+          return {
+            ...item,
+            image: 'images/image09.png',
+            title: PageTemplates.toMojibake(),
+          }
+        }
+        return item
+      })
+
+      const visibleItems = adjustedItems.filter(item => {
         if (GameState.session_auth) {
           if (GameState.grim_to_admin_entered) {
             return item.id <= 9
@@ -743,14 +1647,14 @@ const PageTemplates = {
       const itemsHtml = visibleItems.map(item => {
         if (GameState.session_auth) {
           return `
-            <div class="warehouse-item unlocked">
+            <div class="warehouse-item unlocked" data-wh-id="${item.id}">
               <div class="warehouse-image"><img src="${item.image}" alt="${item.title}" loading="lazy" /></div>
               <div class="warehouse-title">${item.title}</div>
             </div>
           `
         } else {
           return `
-            <div class="warehouse-item locked">
+            <div class="warehouse-item locked" data-wh-id="${item.id}">
               <div class="warehouse-image"><img src="${item.image}" alt="locked image ${item.id}" loading="lazy" /></div>
               <div class="warehouse-title">???</div>
             </div>
@@ -775,6 +1679,37 @@ const PageTemplates = {
       `
     },
     onMount() {
+      if (GameState.maister_story_started) {
+        const slot8 = document.querySelector('.warehouse-item[data-wh-id="8"]')
+        if (slot8 && !GameState.maister_image8_viewed) {
+          GameState.markMaisterImage8Viewed()
+          PageTemplates.winAlert('……記録された')
+        }
+
+        const img8 = slot8 ? slot8.querySelector('img') : null
+        const title8 = slot8 ? slot8.querySelector('.warehouse-title') : null
+        const src8 = String(img8 ? img8.getAttribute('src') || '' : '')
+        const titleText8 = String(title8 ? title8.textContent || '' : '').trim()
+        const swappedVisually =
+          /image09\.png/i.test(src8) || titleText8 === PageTemplates.toMojibake()
+        if (
+          slot8 &&
+          !GameState.maister_swap_done &&
+          swappedVisually
+        ) {
+          GameState.markMaisterSwapDone()
+          if (PageTemplates._maister997TimerId) {
+            clearTimeout(PageTemplates._maister997TimerId)
+            PageTemplates._maister997TimerId = null
+          }
+          // ここから先はダイアログ不要: 「気づいたね」だけ出して以後は停止する
+          PageTemplates._winMsgQueue = []
+          GameState.markDialogsDisablePending()
+          PageTemplates.winAlert('気づいたね', { allowWhenPendingDisable: true }).finally(() => {
+            GameState.disableDialogs()
+          })
+        }
+      }
       AccessCounter.increment()
     },
   },
@@ -808,9 +1743,9 @@ const PageTemplates = {
   /**
    * 管理画面（第1暗号入力）
    */
-  admin: {
-    path: '#/admin',
-    requiresAuth: false,
+	  admin: {
+	    path: '#/admin',
+	    requiresAuth: false,
     render() {
       // 認証済みの場合はログアウト画面
       if (GameState.session_auth) {
@@ -830,19 +1765,20 @@ const PageTemplates = {
         `
       }
 
-      // 未認証の場合はログインフォーム
-      if (GameState.login_disabled) {
-        return `
-          <div class="page admin">
-            <h1>管理人画面</h1>
-            <p class="error">現在この端末からはログインできません。</p>
-            <hr />
-            <p class="sub">
-              <small>page: Admin | auth: ${GameState.session_auth} | stage: ${GameState.progress_stage} | attempts: ${GameState.loginAttempts}</small>
-            </p>
-          </div>
-        `
-      }
+	      // 未認証の場合はログインフォーム
+	      if (GameState.login_disabled) {
+	        return `
+	          <div class="page admin">
+	            <h1>管理人画面</h1>
+	            <p class="error">現在この端末からはログインできません。</p>
+	            ${PageTemplates.endingBadgeHtml()}
+	            <hr />
+	            <p class="sub">
+	              <small>page: Admin | auth: ${GameState.session_auth} | stage: ${GameState.progress_stage} | attempts: ${GameState.loginAttempts}</small>
+	            </p>
+	          </div>
+	        `
+	      }
 
       return `
         <div class="page admin">
@@ -859,14 +1795,53 @@ const PageTemplates = {
           </p>
         </div>
       `
-    },
-    onMount() {
-      // 認証済みなら onMount 処理は不要
-      if (GameState.session_auth) return
-      if (GameState.login_disabled) return
+	    },
+	    onMount() {
+	      // 認証済み: 固定スレルートの「お願い。」後に、管理人ページ突入で20連ダイアログを出す
+	      if (GameState.session_auth) {
+	        if (
+	          GameState.fixed_thread_logout_dialogs_pending &&
+	          !GameState.fixed_thread_logout_dialogs_done
+	        ) {
+	          const alerts = [
+	            '逃がさない',
+	            '逃がさない',
+	            '逃がさない',
+	            '逃げるな',
+	            '戻れ',
+	            '戻れ',
+	            'ここから出るな',
+	            'やめろ',
+	            '消せ',
+	            '消すな',
+	            'だめ',
+	            'だめだ',
+	            'だめだって',
+	            'まだ残ってる',
+	            'まだ見える',
+	            '止まらない',
+	            '止まれない',
+	            'もう遅い',
+	            'どうして',
+	            '全部消すしかない',
+	          ]
+	          ;(async () => {
+	            for (const m of alerts) {
+	              await PageTemplates.winAlert(m, {
+	                allowWhenPendingDisable: true,
+	                force: true,
+	                noCorrupt: true,
+	              })
+	            }
+	            GameState.markFixedThreadLogoutDialogsDone()
+	          })()
+	        }
+	        return
+	      }
+	      if (GameState.login_disabled) return
 
-      const form = document.getElementById('adminForm')
-      const passwordInput = document.getElementById('password')
+	      const form = document.getElementById('adminForm')
+	      const passwordInput = document.getElementById('password')
       
       if (passwordInput) {
         passwordInput.addEventListener('input', (e) => {
@@ -1038,49 +2013,92 @@ const PageTemplates = {
   /**
    * ログアウトページ
    */
-  logout: {
-    path: '#/logout',
-    requiresAuth: false,
-    render() {
-      const blockedByPattern1 = GameState.grim_keyword_entered
-      const blockedByPattern23 =
-        (GameState.grim_to_admin_entered || GameState.grim_to_xxx_entered) &&
-        !GameState.azusa_followup_done
+	  logout: {
+	    path: '#/logout',
+	    requiresAuth: false,
+	    render() {
+	      const blockedByFixedThread =
+	        GameState.session_auth &&
+	        GameState.fixed_thread_admin_spam_started &&
+	        !GameState.fixed_thread_azusa_done &&
+	        !GameState.maister_logout_unlocked
+	      const blockedByPattern1 = GameState.grim_keyword_entered
+	      const blockedByPattern23 =
+	        (GameState.grim_to_admin_entered || GameState.grim_to_xxx_entered) &&
+	        !GameState.azusa_followup_done &&
+	        !GameState.maister_logout_unlocked
+	
+		      if (blockedByFixedThread) {
+		        return `
+		          <div class="page logout-container">
+		            <h1>ログアウト失敗</h1>
+		            ${PageTemplates.endingBadgeHtml()}
+		          </div>
+		        `
+		      }
 
-      if (blockedByPattern1 || blockedByPattern23) {
-        const errorMessage = blockedByPattern1
-          ? 'やっぱりお前だったんだな、管理人。'
-          : '繝ｭ繧ｰ繧｢繧ｦ繝医↓螟ｱ謨励＠縺ｾ縺励◆'
-        return `
-          <div class="page logout-container">
-            <h1>ログアウト失敗</h1>
-            <p class="error">${errorMessage}</p>
-          </div>
-        `
-      }
+	      if (blockedByPattern1 || blockedByPattern23) {
+	        const errorMessage = blockedByPattern1
+	          ? 'やっぱりお前だったんだな、管理人。'
+	          : '繝ｭ繧ｰ繧｢繧ｦ繝医↓螟ｱ謨励＠縺ｾ縺励◆'
+	        return `
+	          <div class="page logout-container">
+	            <h1>ログアウト失敗</h1>
+	            <p class="error">${errorMessage}</p>
+	            ${PageTemplates.endingBadgeHtml()}
+	          </div>
+	        `
+	      }
 
       return `
         <div class="page logout-container">
           <p>ログアウト処理中...</p>
         </div>
       `
-    },
-    onMount() {
-      const blockedByPattern1 = GameState.grim_keyword_entered
-      const blockedByPattern23 =
-        (GameState.grim_to_admin_entered || GameState.grim_to_xxx_entered) &&
-        !GameState.azusa_followup_done
+	    },
+	    onMount() {
+	      const blockedByFixedThread =
+	        GameState.session_auth &&
+	        GameState.fixed_thread_admin_spam_started &&
+	        !GameState.fixed_thread_azusa_done &&
+	        !GameState.maister_logout_unlocked
+	      const blockedByPattern1 = GameState.grim_keyword_entered
+	      const blockedByPattern23 =
+	        (GameState.grim_to_admin_entered || GameState.grim_to_xxx_entered) &&
+	        !GameState.azusa_followup_done &&
+	        !GameState.maister_logout_unlocked
 
-      if (blockedByPattern1) {
-        setTimeout(() => {
-          window.location.href = 'https://www.google.com/'
-        }, 7000)
+	      if (blockedByFixedThread) {
+	        return
+	      }
+
+	      if (blockedByPattern1) {
+	        setTimeout(() => {
+	          window.location.href = 'https://www.google.com/'
+	        }, 7000)
         return
       }
 
       if (blockedByPattern23) {
         return
       }
+
+	      if (GameState.maister_logout_unlocked && !GameState.site_erased) {
+	        const message = [
+	          '管理人より。',
+	          '',
+	          '回収しました。あなたが見た分だけ、ここに残りました。',
+	          'このメッセージ以外は削除済みです。',
+	          '',
+	          'もう探さないで。',
+	        ].join('\n')
+
+		        PageTemplates.winAlert('削除を開始します')
+		        GameState.eraseSiteKeepMessage(message)
+		        PageTemplates.winAlert('完了')
+		        Router.navigate('final')
+		        return
+	      }
 
       if (GameState.azusa_followup_done && !GameState.azusa_apology_diary_created) {
         DiaryEntries.addAzusaApologyEntry()
@@ -1092,5 +2110,26 @@ const PageTemplates = {
         Router.navigate('admin')
       }, 1000)
     },
+  },
+
+  /**
+   * 最終ページ（メッセージのみ）
+   */
+  final: {
+    path: '#/final',
+    requiresAuth: false,
+    render() {
+      const message = GameState.site_erased_message || '削除済み'
+      const html = String(message).replace(/\n/g, '<br>')
+	      return `
+	        <div class="page final-message">
+	          <h1>管理人からのメッセージ</h1>
+	          <hr />
+	          <div class="final-text">${html}</div>
+	          ${PageTemplates.endingBadgeHtml()}
+	        </div>
+	      `
+	    },
+    onMount() {},
   },
 }

@@ -71,6 +71,18 @@ const Router = {
   navigate(path) {
     const cleanPath = path.startsWith('/') ? path.slice(1) : path
 
+    // 最終削除モード中は常に最終ページへ
+    if (GameState.site_erased) {
+      if (window.location.hash !== '#/final') {
+        window.location.hash = '#/final'
+      }
+      const finalTemplate = PageTemplates.final
+      if (finalTemplate) {
+        this.render(finalTemplate, {}, 'final')
+      }
+      return
+    }
+
     // ログイン失敗ロック中は常にロック画面へ固定
     if (GameState.isNavigationLocked()) {
       if (GameState.isLockExpired()) {
@@ -116,6 +128,29 @@ const Router = {
     const app = document.getElementById('app')
     if (!app) return
 
+    // Preserve focus across re-renders (e.g. BBS auto-post refreshes).
+    // Router.navigate does not always update hash, but it does re-render; without this, form focus is lost.
+    let focusState = null
+    try {
+      const ae = document.activeElement
+      if (
+        ae &&
+        ae.id &&
+        app.contains(ae) &&
+        (ae.tagName === 'TEXTAREA' || ae.tagName === 'INPUT')
+      ) {
+        focusState = {
+          id: ae.id,
+          tag: ae.tagName,
+          selectionStart: typeof ae.selectionStart === 'number' ? ae.selectionStart : null,
+          selectionEnd: typeof ae.selectionEnd === 'number' ? ae.selectionEnd : null,
+          scrollTop: typeof ae.scrollTop === 'number' ? ae.scrollTop : null,
+        }
+      }
+    } catch (e) {
+      focusState = null
+    }
+
     // HTML を生成
     const pageHtml = template.render(params)
     const layoutHtml = this.wrapLayout(pageHtml, key, params)
@@ -123,33 +158,61 @@ const Router = {
     // DOM を更新
     app.innerHTML = layoutHtml
 
+	    // 現在表示中のBBSスレIDを記録（Router.navigate は hash を更新しないため）
+	    try {
+	      if (typeof PageTemplates !== 'undefined' && PageTemplates) {
+	        if (key === 'bbs-thread' && params && params.id != null) {
+	          PageTemplates._activeBbsThreadId = Number(params.id)
+	        } else {
+	          PageTemplates._activeBbsThreadId = null
+	        }
+	      }
+	    } catch (e) {
+	      // ignore
+	    }
+
     // onMount コールバックを実行
     template.onMount(params)
+
+    // Restore focus after onMount so form values/listeners are ready.
+    if (focusState && focusState.id) {
+      try {
+        const el = document.getElementById(focusState.id)
+        if (el && el.tagName === focusState.tag && !el.disabled) {
+          el.focus({ preventScroll: true })
+          if (
+            typeof el.setSelectionRange === 'function' &&
+            typeof focusState.selectionStart === 'number' &&
+            typeof focusState.selectionEnd === 'number'
+          ) {
+            el.setSelectionRange(focusState.selectionStart, focusState.selectionEnd)
+          }
+          if (typeof focusState.scrollTop === 'number') {
+            el.scrollTop = focusState.scrollTop
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    // うらなみルート: 8->9目撃後に「BBSへ戻った」扱いを堅牢に立てる
+    // (同一ハッシュを踏む等でテンプレ側の onMount が走らないケースでも拾う)
+    if (
+      GameState.maister_story_started &&
+      GameState.maister_swap_done &&
+      !GameState.maister_bbs_reentered_after_swap &&
+      String(key || '').startsWith('bbs')
+    ) {
+      GameState.markMaisterBbsReenteredAfterSwap()
+    }
 
     // あずさ投稿後の管理人連投を継続（ページ移動後も進行）
     if (typeof PageTemplates.scheduleAzusaFollowup === 'function') {
       PageTemplates.scheduleAzusaFollowup()
     }
-
-    // ページ内サブテキストをデバッグ全表示に置き換え
-    const stateEntries = Object.entries(GameState)
-      .filter(([stateKey, value]) =>
-        typeof value !== 'function' &&
-        stateKey !== 'session_auth' &&
-        stateKey !== 'progress_stage'
-      )
-      .map(([stateKey, value]) => `${stateKey}: ${String(value)}`)
-
-    const debugText = [
-      `page: ${key || 'unknown'}`,
-      `auth: ${GameState.session_auth}`,
-      `stage: ${GameState.progress_stage}`,
-      ...stateEntries,
-    ].join(' | ')
-
-    const pageSub = app.querySelector('.page .sub small')
-    if (pageSub) {
-      pageSub.textContent = debugText
+    if (typeof PageTemplates.scheduleMaisterStory === 'function') {
+      PageTemplates.scheduleMaisterStory()
     }
 
     // カウンター表示を更新
@@ -196,6 +259,16 @@ const Router = {
         counterDisplay.textContent = AccessCounter.getFormatted()
       }
     }
+
+    // うらなみルート完走後: 全ページの全テキストを文字化け
+    if (GameState.global_mojibake && typeof PageTemplates.applyGlobalMojibake === 'function') {
+      PageTemplates.applyGlobalMojibake(app)
+      try {
+        document.title = PageTemplates.toMojibake()
+      } catch (e) {
+        // ignore
+      }
+    }
   },
 
   /**
@@ -204,37 +277,49 @@ const Router = {
    * @returns {string} レイアウト付きHTML
    */
   wrapLayout(pageHtml, key = '', params = {}) {
-    const isCounterEditable = key === 'bbs-thread' && String(params.id || '') === '999'
-    const counterDisplayHtml = isCounterEditable
-      ? `<input id="counter-display" class="counter-display" type="text" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" value="${AccessCounter.getFormatted()}" />`
-      : `<div class="counter-display" id="counter-display">0000</div>`
-
-    return `
-      <div class="global-container">
-        <header>
-          <h1>ぐりむの部屋</h1>
-        </header>
-        <div class="main-wrapper">
-          <nav class="global-nav">
-            <div class="nav-section">
-              <h3>■ MENU</h3>
-              <a href="#/">ホーム</a>
-              <a href="#/bbs">BBS</a>
-              <a href="#/diary">日記</a>
-              <a href="#/warehouse">倉庫</a>
-              <a href="#/admin">管理人</a>
-            </div>
-            <div class="counter-widget">
-              <h3>アクセス数</h3>
-              ${counterDisplayHtml}
-              <div class="counter-label">since 2026</div>
-            </div>
-          </nav>
+    if (GameState.site_erased || key === 'final') {
+      return `
+        <div class="global-container final-mode">
           <main class="content">
             ${pageHtml}
           </main>
         </div>
-      </div>
-    `
-  },
+      `
+    }
+
+    const isCounterEditable = key === 'bbs-thread' && String(params.id || '') === '999'
+	    const counterDisplayHtml = isCounterEditable
+	      ? `<input id="counter-display" class="counter-display" type="text" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" value="${AccessCounter.getFormatted()}" />`
+	      : `<div class="counter-display" id="counter-display">0000</div>`
+
+	    return `
+	      <div class="global-container">
+	        <header>
+	          <h1>ぐりむの部屋</h1>
+	        </header>
+	        <div class="main-wrapper">
+	          <nav class="global-nav">
+	            <div class="nav-section">
+	              <h3>■ MENU</h3>
+	              <a href="#/">ホーム</a>
+	              <a href="#/bbs">BBS</a>
+	              <a href="#/diary">日記</a>
+	              <a href="#/warehouse">倉庫</a>
+	              <a href="#/admin">管理人</a>
+	            </div>
+	            <div class="counter-widget">
+	              <h3>アクセス数</h3>
+	              ${counterDisplayHtml}
+	            </div>
+	          </nav>
+	          <main class="content">
+	            ${pageHtml}
+	          </main>
+	        </div>
+	        <footer class="site-footer" data-no-corrupt="1">
+	          <small>※本サイトはフィクションです。実際の個人・団体とは一切関係ありません。©Nel_HIME</small>
+	        </footer>
+	      </div>
+	    `
+	  },
 }
