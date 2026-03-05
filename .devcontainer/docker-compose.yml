@@ -34,7 +34,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile_python
-    container_name: auth_python
     environment:
       - AWS_REGION=ap-northeast-1
     volumes:
