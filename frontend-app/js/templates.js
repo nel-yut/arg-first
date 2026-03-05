@@ -897,19 +897,34 @@
         return true
       })
 
-      // 管理者フラグ時、キリ番スレ(id: 993)の id:11 を差し込み表示
+      // 管理者フラグ時、キリ番スレ(id: 993)の id:11 にあずさ投稿を挿入表示（既存投稿は繰り下げ）
       let displayPosts = visiblePosts
       if (threadId === 993 && GameState.grim_to_admin_entered) {
-        displayPosts = visiblePosts.map((p) => {
-          if (p.id === 11) {
-            return {
-              ...p,
-              name: 'あずさ',
-              content: '1234通過しました！',
+        const azusaInsert = {
+          id: 11,
+          name: 'あずさ',
+          content: '1234通過しました！',
+          date: '2007-11-11 20:35',
+        }
+        const alreadyInserted = visiblePosts.some(
+          (p) => p.name === azusaInsert.name && p.content === azusaInsert.content
+        )
+        if (!alreadyInserted) {
+          let inserted = false
+          const shifted = []
+          for (const p of visiblePosts) {
+            if (!inserted && Number(p.id) >= azusaInsert.id) {
+              shifted.push({ ...azusaInsert })
+              inserted = true
             }
+            shifted.push(inserted ? { ...p, id: Number(p.id) + 1 } : p)
           }
-          return p
-        })
+          if (!inserted) {
+            const lastId = Number(visiblePosts[visiblePosts.length - 1]?.id || 0)
+            shifted.push({ ...azusaInsert, id: lastId + 1 })
+          }
+          displayPosts = shifted
+        }
       }
 
 	      const postsNoCorruptAttr = isFixedThread ? ' data-no-corrupt="1"' : ''
@@ -1556,11 +1571,11 @@
             : entry.content
       const noCorruptAttr = entry.noCorrupt ? ' data-no-corrupt="1"' : ''
 
-      return `
-        <div class="page diary-detail">
-          <h1>${date}</h1>
-          <h2${noCorruptAttr}>${displayTitle}</h2>
-          ${!entry.isPublic ? '<span class="private-badge">🔒 プライベート</span>' : '<span class="public-badge">🔓 公開</span>'}
+	      return `
+	        <div class="page diary-detail">
+	          <h1>${date}</h1>
+	          <h2${noCorruptAttr}>${displayTitle}</h2>
+	          ${!entry.isPublic ? '<span class="private-badge">🔒 プライベート</span>' : '<span class="public-badge">🔓 公開</span>'}
           <hr />
           
           <div class="diary-content"${noCorruptAttr}>${displayContent.replace(/\n/g, '<br>')}</div>
@@ -1569,12 +1584,13 @@
           ${navHtml}
 
           <hr />
-          <p class="sub">
-            <small>page: DiaryDetail | date: ${date} | auth: ${GameState.session_auth}</small>
-          </p>
-        </div>
-      `
-    },
+	          <p class="sub">
+	            <small>page: DiaryDetail | date: ${date} | auth: ${GameState.session_auth}</small>
+	          </p>
+	          ${PageTemplates.endingBadgeHtml()}
+	        </div>
+	      `
+	    },
 			    onMount(params) {
 			      const entry = DiaryEntries.getByDate(params.date)
 			      const SPECIAL_PRIVATE_DATE = '2008-03-02'
@@ -1617,8 +1633,15 @@
         { title: '縺ｿ縺､縺代◆', image: 'images/image09.png', id: 9 },
       ]
 
-      // うらなみルート: 画像8を後から画像9へ差し替える（直後ではない）
-      const shouldSwapSlot8 = GameState.maister_swap_ready || GameState.maister_swap_done
+      // ED-1 では 009 は表示しない
+      const endingCode = PageTemplates.getEndingCode()
+      const isEd1 = endingCode === 'ED-1'
+
+      // うらなみルート(ED-3)のみ、画像8を後から画像9へ差し替える（直後ではない）
+      const shouldSwapSlot8 =
+        !isEd1 &&
+        GameState.grim_to_xxx_entered &&
+        (GameState.maister_swap_ready || GameState.maister_swap_done)
       const adjustedItems = items.map((item) => {
         if (item.id === 8 && shouldSwapSlot8) {
           return {
@@ -1631,6 +1654,9 @@
       })
 
       const visibleItems = adjustedItems.filter(item => {
+        if (isEd1 && item.id === 9) {
+          return false
+        }
         if (GameState.session_auth) {
           if (GameState.grim_to_admin_entered) {
             return item.id <= 9
